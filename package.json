@@ -1,0 +1,17 @@
+{
+  "name": "my-telegram-bot",
+  "version": "1.0.0",
+  "description": "ربات تلگرام my-telegram-bot با ثبت‌نام مرحله‌ای، VIP، AI و مدیریت ادمین",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.61.0",
+    "pg": "^8.11.1",
+    "moment-jalaali": "^0.9.3"
+  }
+}
