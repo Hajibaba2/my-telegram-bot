@@ -3,7 +3,7 @@
 // - support DATABASE_URL (Railway)
 // - better error handling and graceful shutdown
 
-require('dotenv').config(); // optional for local dev
+try { require('dotenv').config(); } catch (e) { /* dotenv is optional in production */ }
 
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
@@ -110,8 +110,7 @@ async function start() {
     // Create bot (polling by default)
     bot = new TelegramBot(TOKEN, { polling: true });
 
-    // ... ادامه‌ی بقیه‌ی منطق ربات (handlers) ...
-    // اگر کد اصلی شما handlers بعد از این قرار داره، آن‌ها را همین‌جا اضافه کنید.
+    // TODO: add existing handlers here (message, callback_query, etc.)
 
     console.log('🤖 Bot started (polling).');
   } catch (err) {
