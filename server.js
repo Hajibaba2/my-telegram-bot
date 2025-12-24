@@ -29,23 +29,36 @@ const states = {};
 
 // ساخت جدول‌های لازم
 async function createTables() {
+  // جدول users - telegram_id را PRIMARY KEY کن
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       telegram_id BIGINT PRIMARY KEY,
-      name VARCHAR(255), age INTEGER, city VARCHAR(255), region VARCHAR(255),
-      gender VARCHAR(50), job VARCHAR(255), goal TEXT, phone VARCHAR(50),
+      name VARCHAR(255), 
+      age INTEGER, 
+      city VARCHAR(255), 
+      region VARCHAR(255),
+      gender VARCHAR(50), 
+      job VARCHAR(255), 
+      goal TEXT, 
+      phone VARCHAR(50),
       ai_questions_used INTEGER DEFAULT 0,
       registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // جدول vips - foreign key به telegram_id
   await pool.query(`
     CREATE TABLE IF NOT EXISTS vips (
       id SERIAL PRIMARY KEY,
       telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
-      start_date TIMESTAMP, end_date TIMESTAMP,
-      payment_receipt TEXT, approved BOOLEAN DEFAULT FALSE
+      start_date TIMESTAMP, 
+      end_date TIMESTAMP,
+      payment_receipt TEXT, 
+      approved BOOLEAN DEFAULT FALSE
     );
   `);
+
+  // بقیه جدول‌ها (settings و broadcast_messages)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS settings (
       id INTEGER PRIMARY KEY DEFAULT 1,
@@ -55,6 +68,7 @@ async function createTables() {
     );
     INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;
   `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS broadcast_messages (
       id SERIAL PRIMARY KEY,
@@ -69,6 +83,7 @@ async function createTables() {
       timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
   console.log('جدول‌ها آماده شدند.');
 }
 
