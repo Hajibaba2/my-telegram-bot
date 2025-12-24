@@ -29,62 +29,71 @@ const states = {};
 
 // ساخت جدول‌های لازم
 async function createTables() {
-  // جدول users - telegram_id را PRIMARY KEY کن
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      telegram_id BIGINT PRIMARY KEY,
-      name VARCHAR(255), 
-      age INTEGER, 
-      city VARCHAR(255), 
-      region VARCHAR(255),
-      gender VARCHAR(50), 
-      job VARCHAR(255), 
-      goal TEXT, 
-      phone VARCHAR(50),
-      ai_questions_used INTEGER DEFAULT 0,
-      registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+  try {
+    // ۱. جدول users - حتماً PRIMARY KEY
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        telegram_id BIGINT PRIMARY KEY,
+        name VARCHAR(255),
+        age INTEGER,
+        city VARCHAR(255),
+        region VARCHAR(255),
+        gender VARCHAR(50),
+        job VARCHAR(255),
+        goal TEXT,
+        phone VARCHAR(50),
+        ai_questions_used INTEGER DEFAULT 0,
+        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
-  // جدول vips - foreign key به telegram_id
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS vips (
-      id SERIAL PRIMARY KEY,
-      telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
-      start_date TIMESTAMP, 
-      end_date TIMESTAMP,
-      payment_receipt TEXT, 
-      approved BOOLEAN DEFAULT FALSE
-    );
-  `);
+    // ۲. جدول vips - بعد از users
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS vips (
+        id SERIAL PRIMARY KEY,
+        telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
+        start_date TIMESTAMP,
+        end_date TIMESTAMP,
+        payment_receipt TEXT,
+        approved BOOLEAN DEFAULT FALSE
+      );
+    `);
 
-  // بقیه جدول‌ها (settings و broadcast_messages)
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS settings (
-      id INTEGER PRIMARY KEY DEFAULT 1,
-      ai_token TEXT,
-      free_channel TEXT, vip_channel TEXT,
-      membership_fee VARCHAR(100), wallet_address TEXT, network TEXT
-    );
-    INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;
-  `);
+    // ۳. جدول settings
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS settings (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        ai_token TEXT,
+        free_channel TEXT,
+        vip_channel TEXT,
+        membership_fee VARCHAR(100),
+        wallet_address TEXT,
+        network TEXT
+      );
+    `);
+    await pool.query(`INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;`);
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS broadcast_messages (
-      id SERIAL PRIMARY KEY,
-      admin_id BIGINT NOT NULL,
-      target_type VARCHAR(50) NOT NULL,
-      message_text TEXT,
-      media_type VARCHAR(50),
-      media_file_id TEXT,
-      caption TEXT,
-      sent_count INTEGER DEFAULT 0,
-      failed_count INTEGER DEFAULT 0,
-      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+    // ۴. جدول بایگانی پیام همگانی
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS broadcast_messages (
+        id SERIAL PRIMARY KEY,
+        admin_id BIGINT NOT NULL,
+        target_type VARCHAR(50) NOT NULL,
+        message_text TEXT,
+        media_type VARCHAR(50),
+        media_file_id TEXT,
+        caption TEXT,
+        sent_count INTEGER DEFAULT 0,
+        failed_count INTEGER DEFAULT 0,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
-  console.log('جدول‌ها آماده شدند.');
+    console.log('جدول‌ها با موفقیت ساخته/به‌روزرسانی شدند.');
+  } catch (error) {
+    console.error('خطا در ساخت جدول‌ها:', error.message);
+    // اگر خطا بود، لاگ دقیق نمایش بده تا بفهمیم کجا مشکل داره
+  }
 }
 
 // ریست کامل دیتابیس (فقط ادمین)
