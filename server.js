@@ -30,14 +30,7 @@ const states = {};
 // ساخت جدول‌های لازم
 async function createTables() {
   try {
-    // ۱. حذف جدول‌های وابسته برای جلوگیری از خطا
-    await pool.query('DROP TABLE IF EXISTS vips CASCADE;');
-    await pool.query('DROP TABLE IF EXISTS broadcast_messages CASCADE;');
-    await pool.query('DROP TABLE IF EXISTS settings CASCADE;');
-    await pool.query('DROP TABLE IF EXISTS users CASCADE;');
-    await pool.query('DROP TABLE IF EXISTS messages CASCADE;');
-    await pool.query('DROP TABLE IF EXISTS vip_requests CASCADE;');
-    
+        
     // ۲. ساخت جدول users (با PRIMARY KEY)
     await pool.query(`
       CREATE TABLE users (
