@@ -1,215 +1,325 @@
-// server.js
+// توضیح: واردات ماژول‌ها - Telegram Bot، PostgreSQL، تاریخ شمسی، Express برای Webhook و OpenAI (اختیاری برای AI واقعی)
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const moment = require('moment-jalaali');
+const express = require('express');
+const { OpenAI } = require('openai'); // npm install openai اگر می‌خواهید AI واقعی استفاده کنید
 
-// ======== CONFIG ========
-const TOKEN = 'YOUR_BOT_TOKEN';
-const ADMIN_ID = 123456789; // Telegram ID ادمین
-const FREE_CHANNEL = 'https://t.me/free_channel';
-const VIP_CHANNEL = 'https://t.me/vip_channel';
-const VIP_PRICE_TEXT = 'لطفاً مبلغ X را به آدرس Y منتقل کنید و رسید را ارسال کنید.';
+const app = express();
+app.use(express.json());
 
-// ======== POSTGRES POOL ========
+// توضیح: تنظیم متغیرهای محیطی
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID);
+const PORT = process.env.PORT || 3000;
+
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'telegram_bot',
-  password: 'postgres',
-  port: 5432,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT || 5432,
+  database: process.env.DB_NAME,
 });
 
-// ======== CREATE TABLES IF NOT EXISTS ========
-(async () => {
+const bot = new TelegramBot(BOT_TOKEN);
+let openai = null;
+
+// توضیح: حالت‌های موقت کاربران (ثبت‌نام، VIP، تنظیمات ادمین و ...)
+const states = {};
+
+// توضیح: ساخت جدول‌های لازم
+async function createTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      telegram_id BIGINT UNIQUE,
-      username TEXT,
-      name TEXT,
-      age TEXT,
-      city TEXT,
-      job TEXT,
-      goal TEXT
+      telegram_id BIGINT PRIMARY KEY,
+      name VARCHAR(255), age INTEGER, city VARCHAR(255), region VARCHAR(255),
+      gender VARCHAR(50), job VARCHAR(255), goal TEXT, phone VARCHAR(50),
+      ai_questions_used INTEGER DEFAULT 0,
+      registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS vip_requests (
+    CREATE TABLE IF NOT EXISTS vips (
       id SERIAL PRIMARY KEY,
-      telegram_id BIGINT,
-      username TEXT,
-      status TEXT DEFAULT 'pending',
-      receipt TEXT
+      telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
+      start_date TIMESTAMP, end_date TIMESTAMP,
+      payment_receipt TEXT, approved BOOLEAN DEFAULT FALSE
     );
   `);
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS messages (
-      id SERIAL PRIMARY KEY,
-      telegram_id BIGINT,
-      username TEXT,
-      message TEXT
+    CREATE TABLE IF NOT EXISTS settings (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      ai_token TEXT,
+      free_channel TEXT, vip_channel TEXT,
+      membership_fee VARCHAR(100), wallet_address TEXT, network TEXT
     );
+    INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;
   `);
-})();
-
-// ======== BOT ========
-const bot = new TelegramBot(TOKEN, { polling: true });
-
-// ======== HELPER FUNCTIONS ========
-function getPersianDate() {
-  return moment().tz('Asia/Tehran').format('jYYYY/jMM/jDD HH:mm');
+  console.log('جدول‌ها آماده شدند.');
 }
 
-function mainMenu() {
+// توضیح: ریست کامل دیتابیس (حذف و بازسازی جدول‌ها)
+async function resetDatabase() {
+  await pool.query('DROP TABLE IF EXISTS vips, users, settings CASCADE;');
+  await createTables();
+  bot.sendMessage(ADMIN_CHAT_ID, 'دیتابیس ریست شد و جدول‌ها بازسازی شدند.');
+}
+
+// توضیح: چک وضعیت VIP کاربر
+async function isVip(telegramId) {
+  const res = await pool.query(
+    'SELECT * FROM vips WHERE telegram_id = $1 AND approved = TRUE AND end_date > CURRENT_TIMESTAMP',
+    [telegramId]
+  );
+  return res.rows.length > 0;
+}
+
+// توضیح: تنظیم Webhook و راه‌اندازی سرور
+app.post(`/bot${BOT_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+app.listen(PORT, async () => {
+  const webhookUrl = `https://${process.env.RAILWAY_STATIC_URL || process.env.HEROKU_APP_NAME || 'your-domain.com'}/bot${BOT_TOKEN}`;
+  await bot.setWebHook(webhookUrl);
+  console.log(`Webhook تنظیم شد: ${webhookUrl}`);
+  await createTables();
+});
+
+// توضیح: منوی اصلی کاربر
+function mainKeyboard(isRegistered, isAdmin) {
+  const keyboard = [
+    [{ text: '📺 کانال رایگان' }, { text: '💎 عضویت VIP' }],
+    [{ text: '💬 چت با ادمین' }, { text: '🤖 چت با هوش مصنوعی' }],
+    [{ text: isRegistered ? '✏️ ویرایش اطلاعات' : '📝 ثبت‌نام' }],
+  ];
+  if (isAdmin) keyboard.push([{ text: '🛡️ پنل ادمین' }]);
+  return { reply_markup: { keyboard, resize_keyboard: true } };
+}
+
+// توضیح: منوی ادمین
+function adminKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        ['💬 ارسال پیام به ادمین', '🤖 هوش مصنوعی'],
-        ['📢 کانال رایگان', '🌟 عضویت VIP'],
-        ['📝 ثبت نام / ✏️ ویرایش اطلاعات'],
+        [{ text: '🤖 هوش مصنوعی' }, { text: '📺 کانال‌ها' }],
+        [{ text: '👥 کاربران' }, { text: '📨 پیامرسانی' }],
+        [{ text: '📊 آمار' }, { text: '🔄 ریست دیتابیس' }],
+        [{ text: '↩️ بازگشت به منو اصلی' }],
       ],
       resize_keyboard: true,
-      one_time_keyboard: false,
     },
   };
 }
 
-async function getUser(telegram_id) {
-  const res = await pool.query('SELECT * FROM users WHERE telegram_id=$1', [telegram_id]);
-  return res.rows[0];
-}
-
-// ======== HANDLERS ========
+// توضیح: هندلر /start
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  let user = await getUser(chatId);
-  if (!user) {
-    await bot.sendMessage(chatId, `سلام! 👋\nشما هنوز ثبت‌نام نکرده‌اید. می‌توانید با انتخاب "📝 ثبت نام / ✏️ ویرایش اطلاعات" ثبت‌نام کنید.`, mainMenu());
-  } else {
-    await bot.sendMessage(chatId, `سلام ${user.name || ''} 👋\nبه ربات خوش آمدید!`, mainMenu());
-  }
+  const user = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [chatId]);
+  const isRegistered = user.rows.length > 0;
+  const isAdmin = chatId === ADMIN_CHAT_ID;
+
+  bot.sendMessage(chatId, 'به KaniaChatBot خوش آمدید! 🎉', mainKeyboard(isRegistered, isAdmin));
 });
 
-// ======== MENU BUTTONS ========
+// توضیح: هندلر پیام‌های متنی اصلی
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
-  const text = msg.text;
-  let user = await getUser(chatId);
+  const text = msg.text || '';
+  const isAdmin = chatId === ADMIN_CHAT_ID;
 
-  // ثبت نام / ویرایش
-  if (text === '📝 ثبت نام / ✏️ ویرایش اطلاعات') {
-    if (!user) {
-      bot.sendMessage(chatId, 'لطفاً نام خود را وارد کنید:');
-      bot.once('message', async (m1) => {
-        const name = m1.text;
-        bot.sendMessage(chatId, 'سن خود را وارد کنید:');
-        bot.once('message', async (m2) => {
-          const age = m2.text;
-          bot.sendMessage(chatId, 'شهر خود را وارد کنید:');
-          bot.once('message', async (m3) => {
-            const city = m3.text;
-            bot.sendMessage(chatId, 'شغل خود را وارد کنید:');
-            bot.once('message', async (m4) => {
-              const job = m4.text;
-              bot.sendMessage(chatId, 'هدف خود را وارد کنید:');
-              bot.once('message', async (m5) => {
-                const goal = m5.text;
-                const username = msg.from.username || '';
-                await pool.query(
-                  'INSERT INTO users (telegram_id, username, name, age, city, job, goal) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-                  [chatId, username, name, age, city, job, goal]
-                );
-                bot.sendMessage(chatId, '✅ ثبت‌نام با موفقیت انجام شد.', mainMenu());
+  // حالت‌های موقت (ثبت‌نام، تنظیمات ادمین و ...)
+  if (states[chatId]) {
+    await handleState(chatId, text, msg);
+    return;
+  }
 
-                // گزارش کامل ثبت نام به ادمین
-                bot.sendMessage(
-                  ADMIN_ID,
-                  `📝 ثبت‌نام کاربر جدید\n👤 نام: ${name}\n🎂 سن: ${age}\n🏙 شهر: ${city}\n💼 شغل: ${job}\n🎯 هدف: ${goal}\n@${username}\n🕒 ${getPersianDate()}`
-                );
-              });
-            });
-          });
-        });
-      });
+  // منوی کاربر عادی
+  if (text === '📺 کانال رایگان') {
+    const settings = await pool.query('SELECT free_channel FROM settings');
+    const link = settings.rows[0]?.free_channel || 'تنظیم نشده';
+    bot.sendMessage(chatId, `کانال رایگان: ${link}`);
+  }
+
+  if (text === '💎 عضویت VIP') {
+    const settings = await pool.query('SELECT membership_fee, wallet_address, network FROM settings');
+    const s = settings.rows[0];
+    if (s && s.membership_fee) {
+      bot.sendMessage(chatId, `💎 عضویت VIP\nمبلغ: ${s.membership_fee}\nکیف پول: ${s.wallet_address}\nشبکه: ${s.network}\n\nرسید پرداخت را ارسال کنید.`);
+      states[chatId] = { type: 'vip_receipt' };
     } else {
-      bot.sendMessage(chatId, 'ویرایش اطلاعات:');
-      bot.sendMessage(chatId, 'لطفاً نام خود را وارد کنید:');
-      bot.once('message', async (m1) => {
-        const name = m1.text;
-        bot.sendMessage(chatId, 'سن خود را وارد کنید:');
-        bot.once('message', async (m2) => {
-          const age = m2.text;
-          bot.sendMessage(chatId, 'شهر خود را وارد کنید:');
-          bot.once('message', async (m3) => {
-            const city = m3.text;
-            bot.sendMessage(chatId, 'شغل خود را وارد کنید:');
-            bot.once('message', async (m4) => {
-              const job = m4.text;
-              bot.sendMessage(chatId, 'هدف خود را وارد کنید:');
-              bot.once('message', async (m5) => {
-                const goal = m5.text;
-                await pool.query(
-                  'UPDATE users SET name=$1, age=$2, city=$3, job=$4, goal=$5 WHERE telegram_id=$6',
-                  [name, age, city, job, goal, chatId]
-                );
-                bot.sendMessage(chatId, '✅ اطلاعات با موفقیت ویرایش شد.', mainMenu());
-
-                // گزارش ویرایش به ادمین
-                bot.sendMessage(
-                  ADMIN_ID,
-                  `✏️ ویرایش اطلاعات کاربر\n👤 نام: ${name}\n🎂 سن: ${age}\n🏙 شهر: ${city}\n💼 شغل: ${job}\n🎯 هدف: ${goal}\n@${user.username}\n🕒 ${getPersianDate()}`
-                );
-              });
-            });
-          });
-        });
-      });
+      bot.sendMessage(chatId, 'اطلاعات VIP هنوز تنظیم نشده.');
     }
   }
 
-  // ارسال پیام به ادمین
-  else if (text === '💬 ارسال پیام به ادمین') {
-    bot.sendMessage(chatId, 'پیام خود را وارد کنید:');
-    bot.once('message', async (m) => {
-      const msgText = m.text;
-      const username = msg.from.username || '';
-      await pool.query(
-        'INSERT INTO messages (telegram_id, username, message) VALUES ($1,$2,$3)',
-        [chatId, username, msgText]
-      );
-      bot.sendMessage(chatId, '✅ پیام شما برای ادمین ارسال شد.', mainMenu());
-      bot.sendMessage(ADMIN_ID, `💬 پیام از کاربر\n@${username}\n${msgText}\n🕒 ${getPersianDate()}`);
-    });
+  if (text === '💬 چت با ادمین') {
+    bot.sendMessage(chatId, 'پیام خود را بنویسید، به ادمین ارسال می‌شود.');
+    states[chatId] = { type: 'chat_admin' };
   }
 
-  // هوش مصنوعی
-  else if (text === '🤖 هوش مصنوعی') {
-    bot.sendMessage(chatId, 'سوال خود را برای هوش مصنوعی وارد کنید:');
-    bot.once('message', async (m) => {
-      const question = m.text;
-      // پاسخ هوش مصنوعی (مثال ساده)
-      const answer = `💡 پاسخ به سوال شما: ${question}`;
-      bot.sendMessage(chatId, answer, mainMenu());
-    });
+  if (text === '🤖 چت با هوش مصنوعی') {
+    bot.sendMessage(chatId, 'سوال خود را بپرسید:');
+    states[chatId] = { type: 'ai_chat' };
   }
 
-  // کانال رایگان
-  else if (text === '📢 کانال رایگان') {
-    bot.sendMessage(chatId, `📢 کانال رایگان: ${FREE_CHANNEL}`, mainMenu());
+  if (text === '📝 ثبت‌نام' || text === '✏️ ویرایش اطلاعات') {
+    states[chatId] = { type: 'register', step: 0, data: {} };
+    const user = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [chatId]);
+    if (user.rows.length > 0) states[chatId].data = user.rows[0];
+    bot.sendMessage(chatId, 'نام خود را وارد کنید:');
   }
 
-  // عضویت VIP
-  else if (text === '🌟 عضویت VIP') {
-    bot.sendMessage(chatId, `🌟 عضویت VIP\n${VIP_PRICE_TEXT}\nلطفاً رسید را ارسال کنید:`);
-    bot.once('message', async (m) => {
-      const receipt = m.text;
-      const username = msg.from.username || '';
-      await pool.query(
-        'INSERT INTO vip_requests (telegram_id, username, receipt) VALUES ($1,$2,$3)',
-        [chatId, username, receipt]
-      );
-      bot.sendMessage(chatId, '✅ درخواست VIP شما ثبت شد. بعد از تایید ادمین، لینک کانال VIP ارسال خواهد شد.', mainMenu());
-      bot.sendMessage(ADMIN_ID, `🌟 درخواست VIP\n@${username}\nرسید: ${receipt}\n🕒 ${getPersianDate()}`);
-    });
+  // پنل ادمین
+  if (isAdmin && text === '🛡️ پنل ادمین') {
+    bot.sendMessage(chatId, 'پنل ادمین فعال شد.', adminKeyboard());
+  }
+
+  // زیرمنوهای ادمین
+  if (isAdmin) {
+    if (text === '🤖 هوش مصنوعی') {
+      bot.sendMessage(chatId, 'توکن API هوش مصنوعی (OpenAI) را وارد کنید:');
+      states[chatId] = { type: 'set_ai_token' };
+    }
+    if (text === '📺 کانال‌ها') {
+      const keyboard = [
+        [{ text: 'لینک کانال رایگان' }, { text: 'لینک کانال VIP' }],
+        [{ text: 'مبلغ عضویت' }, { text: 'آدرس کیف پول' }, { text: 'شبکه انتقال' }],
+        [{ text: '↩️ بازگشت' }],
+      ];
+      bot.sendMessage(chatId, 'تنظیمات کانال‌ها:', { reply_markup: { keyboard, resize_keyboard: true } });
+    }
+    if (text === '👥 کاربران') {
+      const users = await pool.query('SELECT COUNT(*) FROM users');
+      const vips = await pool.query('SELECT COUNT(*) FROM vips WHERE approved = TRUE');
+      bot.sendMessage(chatId, `کاربران عادی: ${users.rows[0].count}\nکاربران VIP: ${vips.rows[0].count}`);
+    }
+    if (text === '📊 آمار') {
+      const stats = await pool.query('SELECT COUNT(*) as total, SUM(ai_questions_used) as ai_used FROM users');
+      bot.sendMessage(chatId, `کل کاربران: ${stats.rows[0].total}\nسوالات AI استفاده شده: ${stats.rows[0].ai_used || 0}`);
+    }
+    if (text === '🔄 ریست دیتابیس') {
+      await resetDatabase();
+    }
+    if (text === '↩️ بازگشت به منو اصلی' || text === '↩️ بازگشت') {
+      delete states[chatId];
+      bot.sendMessage(chatId, 'بازگشت به منو اصلی.', mainKeyboard(true, true));
+    }
   }
 });
+
+// توضیح: مدیریت حالت‌های موقت (ثبت‌نام، VIP، چت، تنظیمات ادمین)
+async function handleState(chatId, text, msg) {
+  const state = states[chatId];
+  const isAdmin = chatId === ADMIN_CHAT_ID;
+
+  if (state.type === 'register') {
+    const fields = ['name', 'age', 'city', 'region', 'gender', 'job', 'goal', 'phone'];
+    if (state.step < fields.length) {
+      state.data[fields[state.step]] = text;
+      state.step++;
+      if (state.step < fields.length) {
+        const labels = ['نام', 'سن', 'شهر', 'منطقه', 'جنسیت', 'شغل', 'هدف', 'شماره تماس'];
+        bot.sendMessage(chatId, `${labels[state.step]} خود را وارد کنید:`);
+      } else {
+        await pool.query(`
+          INSERT INTO users (telegram_id, name, age, city, region, gender, job, goal, phone)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (telegram_id) DO UPDATE SET
+          name=EXCLUDED.name, age=EXCLUDED.age, city=EXCLUDED.city, region=EXCLUDED.region,
+          gender=EXCLUDED.gender, job=EXCLUDED.job, goal=EXCLUDED.goal, phone=EXCLUDED.phone
+        `, [chatId, state.data.name, state.data.age, state.data.city, state.data.region,
+            state.data.gender, state.data.job, state.data.goal, state.data.phone]);
+        bot.sendMessage(chatId, 'اطلاعات با موفقیت ذخیره شد! ✅');
+        delete states[chatId];
+      }
+    }
+  }
+
+  if (state.type === 'vip_receipt' && msg.photo) {
+    const fileId = msg.photo[msg.photo.length - 1].file_id;
+    await bot.forwardMessage(ADMIN_CHAT_ID, chatId, msg.message_id);
+    bot.sendMessage(ADMIN_CHAT_ID, `رسید VIP از کاربر ${chatId} - /approve_${chatId} یا /reject_${chatId}`);
+    await pool.query('INSERT INTO vips (telegram_id, payment_receipt) VALUES ($1, $2) ON CONFLICT DO NOTHING', [chatId, fileId]);
+    bot.sendMessage(chatId, 'رسید ارسال شد. منتظر تأیید ادمین باشید.');
+    delete states[chatId];
+  }
+
+  if (state.type === 'chat_admin') {
+    await bot.forwardMessage(ADMIN_CHAT_ID, chatId, msg.message_id);
+    bot.sendMessage(chatId, 'پیام شما به ادمین ارسال شد.');
+    delete states[chatId];
+  }
+
+  if (state.type === 'ai_chat') {
+    const vip = await isVip(chatId);
+    const user = await pool.query('SELECT ai_questions_used FROM users WHERE telegram_id = $1', [chatId]);
+    if (!vip && (user.rows[0]?.ai_questions_used || 0) >= 5) {
+      bot.sendMessage(chatId, 'سوالات رایگان تمام شد. برای نامحدود VIP شوید.');
+      delete states[chatId];
+      return;
+    }
+
+    const settings = await pool.query('SELECT ai_token FROM settings');
+    if (settings.rows[0]?.ai_token) {
+      if (!openai) openai = new OpenAI({ apiKey: settings.rows[0].ai_token });
+      try {
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [{ role: 'user', content: text }],
+        });
+        bot.sendMessage(chatId, completion.choices[0].message.content);
+        await pool.query('UPDATE users SET ai_questions_used = ai_questions_used + 1 WHERE telegram_id = $1', [chatId]);
+      } catch (e) {
+        bot.sendMessage(chatId, 'خطا در ارتباط با AI.');
+      }
+    } else {
+      bot.sendMessage(chatId, 'AI هنوز تنظیم نشده.');
+    }
+  }
+
+  // تنظیمات ادمین
+  if (isAdmin) {
+    if (state.type === 'set_ai_token') {
+      await pool.query('UPDATE settings SET ai_token = $1', [text]);
+      openai = new OpenAI({ apiKey: text });
+      bot.sendMessage(chatId, 'توکن AI ذخیره شد.');
+      delete states[chatId];
+    }
+    // تنظیم لینک‌ها و اطلاعات VIP
+    if (text === 'لینک کانال رایگان') { states[chatId] = { type: 'set_free_channel' }; bot.sendMessage(chatId, 'لینک را وارد کنید:'); }
+    if (text === 'لینک کانال VIP') { states[chatId] = { type: 'set_vip_channel' }; bot.sendMessage(chatId, 'لینک را وارد کنید:'); }
+    if (text === 'مبلغ عضویت') { states[chatId] = { type: 'set_fee' }; bot.sendMessage(chatId, 'مبلغ را وارد کنید:'); }
+    if (text === 'آدرس کیف پول') { states[chatId] = { type: 'set_wallet' }; bot.sendMessage(chatId, 'آدرس را وارد کنید:'); }
+    if (text === 'شبکه انتقال') { states[chatId] = { type: 'set_network' }; bot.sendMessage(chatId, 'شبکه را وارد کنید:'); }
+
+    if (state.type?.startsWith('set_')) {
+      const field = state.type.replace('set_', '');
+      const map = { free_channel: 'free_channel', vip_channel: 'vip_channel', fee: 'membership_fee', wallet: 'wallet_address', network: 'network' };
+      await pool.query(`UPDATE settings SET ${map[field]} = $1`, [text]);
+      bot.sendMessage(chatId, `${field} ذخیره شد.`);
+      delete states[chatId];
+    }
+  }
+});
+
+// توضیح: دستورات تأیید/رد VIP توسط ادمین
+bot.onText(/\/approve_(\d+)/, async (msg, match) => {
+  if (msg.chat.id !== ADMIN_CHAT_ID) return;
+  const userId = match[1];
+  const endDate = moment().add(1, 'month').toDate();
+  await pool.query('UPDATE vips SET approved = TRUE, start_date = CURRENT_TIMESTAMP, end_date = $1 WHERE telegram_id = $2', [endDate, userId]);
+  const settings = await pool.query('SELECT vip_channel FROM settings');
+  bot.sendMessage(userId, `عضویت VIP تأیید شد! تا ${moment(endDate).format('jYYYY/jM/jD')} معتبر است.\nکانال VIP: ${settings.rows[0]?.vip_channel || ''}`);
+  bot.sendMessage(ADMIN_CHAT_ID, `کاربر ${userId} VIP شد.`);
+});
+
+bot.onText(/\/reject_(\d+)/, async (msg, match) => {
+  if (msg.chat.id !== ADMIN_CHAT_ID) return;
+  const userId = match[1];
+  await pool.query('UPDATE vips SET approved = FALSE WHERE telegram_id = $1', [userId]);
+  bot.sendMessage(userId, 'رسید پرداخت تأیید نشد. دوباره تلاش کنید.');
+  bot.sendMessage(ADMIN_CHAT_ID, `رسید کاربر ${userId} رد شد.`);
+});
+
+console.log('ربات با Webhook آماده است!');
