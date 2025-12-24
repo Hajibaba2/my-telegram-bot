@@ -1,202 +1,215 @@
 // server.js
+const TelegramBot = require('node-telegram-bot-api');
+const { Pool } = require('pg');
+const moment = require('moment-jalaali');
 
-import TelegramBot from 'node-telegram-bot-api';
-import express from 'express';
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
-import axios from 'axios';
+// ======== CONFIG ========
+const TOKEN = 'YOUR_BOT_TOKEN';
+const ADMIN_ID = 123456789; // Telegram ID ادمین
+const FREE_CHANNEL = 'https://t.me/free_channel';
+const VIP_CHANNEL = 'https://t.me/vip_channel';
+const VIP_PRICE_TEXT = 'لطفاً مبلغ X را به آدرس Y منتقل کنید و رسید را ارسال کنید.';
 
-// ---------- تنظیمات ----------
-const TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
-const AI_API_KEY = 'YOUR_OPENAI_API_KEY';
-const PORT = process.env.PORT || 3000;
+// ======== POSTGRES POOL ========
+const pool = new Pool({
+  user: 'postgres',
+  host: 'localhost',
+  database: 'telegram_bot',
+  password: 'postgres',
+  port: 5432,
+});
 
-// ---------- دیتابیس ----------
-let db;
+// ======== CREATE TABLES IF NOT EXISTS ========
 (async () => {
-  db = await open({
-    filename: './database.db',
-    driver: sqlite3.Database
-  });
-
-  await db.exec(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      telegram_id TEXT,
+      id SERIAL PRIMARY KEY,
+      telegram_id BIGINT UNIQUE,
       username TEXT,
       name TEXT,
       age TEXT,
       city TEXT,
       job TEXT,
       goal TEXT
-    )
+    );
   `);
-
-  await db.exec(`
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS vip_requests (
+      id SERIAL PRIMARY KEY,
+      telegram_id BIGINT,
+      username TEXT,
+      status TEXT DEFAULT 'pending',
+      receipt TEXT
+    );
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      telegram_id TEXT,
+      id SERIAL PRIMARY KEY,
+      telegram_id BIGINT,
       username TEXT,
       message TEXT
-    )
-  `);
-
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS vip_requests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      telegram_id TEXT,
-      username TEXT,
-      payment_status TEXT
-    )
+    );
   `);
 })();
 
-// ---------- بات تلگرام ----------
+// ======== BOT ========
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// ---------- منوی کاربر ----------
-function userMenu(userRegistered = false) {
+// ======== HELPER FUNCTIONS ========
+function getPersianDate() {
+  return moment().tz('Asia/Tehran').format('jYYYY/jMM/jDD HH:mm');
+}
+
+function mainMenu() {
   return {
     reply_markup: {
       keyboard: [
         ['💬 ارسال پیام به ادمین', '🤖 هوش مصنوعی'],
-        ['📢 کانال رایگان', '💎 عضویت VIP'],
-        [userRegistered ? '✏️ ویرایش اطلاعات' : '📝 ثبت نام']
+        ['📢 کانال رایگان', '🌟 عضویت VIP'],
+        ['📝 ثبت نام / ✏️ ویرایش اطلاعات'],
       ],
       resize_keyboard: true,
-      one_time_keyboard: false
-    }
+      one_time_keyboard: false,
+    },
   };
 }
 
-// ---------- استارت ----------
+async function getUser(telegram_id) {
+  const res = await pool.query('SELECT * FROM users WHERE telegram_id=$1', [telegram_id]);
+  return res.rows[0];
+}
+
+// ======== HANDLERS ========
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  const username = msg.from.username ? '@' + msg.from.username : '';
-  const user = await db.get(`SELECT * FROM users WHERE telegram_id = ?`, [chatId]);
-
-  bot.sendMessage(chatId, `سلام! به ربات خوش آمدید. منو را مشاهده کنید:`, userMenu(!!user));
+  let user = await getUser(chatId);
+  if (!user) {
+    await bot.sendMessage(chatId, `سلام! 👋\nشما هنوز ثبت‌نام نکرده‌اید. می‌توانید با انتخاب "📝 ثبت نام / ✏️ ویرایش اطلاعات" ثبت‌نام کنید.`, mainMenu());
+  } else {
+    await bot.sendMessage(chatId, `سلام ${user.name || ''} 👋\nبه ربات خوش آمدید!`, mainMenu());
+  }
 });
 
-// ---------- مدیریت منو ----------
+// ======== MENU BUTTONS ========
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
-  const username = msg.from.username ? '@' + msg.from.username : '';
+  let user = await getUser(chatId);
 
-  // بررسی ثبت نام
-  let user = await db.get(`SELECT * FROM users WHERE telegram_id = ?`, [chatId]);
-
-  // ---------- ثبت نام / ویرایش ----------
-  if (text === '📝 ثبت نام' || text === '✏️ ویرایش اطلاعات') {
-    bot.sendMessage(chatId, `لطفاً نام خود را وارد کنید:`);
-    bot.once('message', async (nameMsg) => {
-      const name = nameMsg.text;
-
-      bot.sendMessage(chatId, `سن خود را وارد کنید:`);
-      bot.once('message', async (ageMsg) => {
-        const age = ageMsg.text;
-
-        bot.sendMessage(chatId, `شهر خود را وارد کنید:`);
-        bot.once('message', async (cityMsg) => {
-          const city = cityMsg.text;
-
-          bot.sendMessage(chatId, `شغل خود را وارد کنید:`);
-          bot.once('message', async (jobMsg) => {
-            const job = jobMsg.text;
-
-            bot.sendMessage(chatId, `هدف خود را وارد کنید:`);
-            bot.once('message', async (goalMsg) => {
-              const goal = goalMsg.text;
-
-              if (user) {
-                await db.run(
-                  `UPDATE users SET name=?, age=?, city=?, job=?, goal=?, username=? WHERE telegram_id=?`,
-                  [name, age, city, job, goal, username, chatId]
-                );
-              } else {
-                await db.run(
-                  `INSERT INTO users (telegram_id, username, name, age, city, job, goal) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  // ثبت نام / ویرایش
+  if (text === '📝 ثبت نام / ✏️ ویرایش اطلاعات') {
+    if (!user) {
+      bot.sendMessage(chatId, 'لطفاً نام خود را وارد کنید:');
+      bot.once('message', async (m1) => {
+        const name = m1.text;
+        bot.sendMessage(chatId, 'سن خود را وارد کنید:');
+        bot.once('message', async (m2) => {
+          const age = m2.text;
+          bot.sendMessage(chatId, 'شهر خود را وارد کنید:');
+          bot.once('message', async (m3) => {
+            const city = m3.text;
+            bot.sendMessage(chatId, 'شغل خود را وارد کنید:');
+            bot.once('message', async (m4) => {
+              const job = m4.text;
+              bot.sendMessage(chatId, 'هدف خود را وارد کنید:');
+              bot.once('message', async (m5) => {
+                const goal = m5.text;
+                const username = msg.from.username || '';
+                await pool.query(
+                  'INSERT INTO users (telegram_id, username, name, age, city, job, goal) VALUES ($1,$2,$3,$4,$5,$6,$7)',
                   [chatId, username, name, age, city, job, goal]
                 );
-              }
+                bot.sendMessage(chatId, '✅ ثبت‌نام با موفقیت انجام شد.', mainMenu());
 
-              bot.sendMessage(chatId, `✅ ثبت نام شما با موفقیت انجام شد.`, userMenu(true));
-
-              // ---------- گزارش کامل ثبت نام به ادمین ----------
-              const adminId = 'YOUR_ADMIN_TELEGRAM_ID';
-              bot.sendMessage(adminId, `
-🆔 کاربر جدید:
-Username: ${username}
-نام: ${name}
-سن: ${age}
-شهر: ${city}
-شغل: ${job}
-هدف: ${goal}
-              `);
+                // گزارش کامل ثبت نام به ادمین
+                bot.sendMessage(
+                  ADMIN_ID,
+                  `📝 ثبت‌نام کاربر جدید\n👤 نام: ${name}\n🎂 سن: ${age}\n🏙 شهر: ${city}\n💼 شغل: ${job}\n🎯 هدف: ${goal}\n@${username}\n🕒 ${getPersianDate()}`
+                );
+              });
             });
           });
         });
       });
-    });
-    return;
+    } else {
+      bot.sendMessage(chatId, 'ویرایش اطلاعات:');
+      bot.sendMessage(chatId, 'لطفاً نام خود را وارد کنید:');
+      bot.once('message', async (m1) => {
+        const name = m1.text;
+        bot.sendMessage(chatId, 'سن خود را وارد کنید:');
+        bot.once('message', async (m2) => {
+          const age = m2.text;
+          bot.sendMessage(chatId, 'شهر خود را وارد کنید:');
+          bot.once('message', async (m3) => {
+            const city = m3.text;
+            bot.sendMessage(chatId, 'شغل خود را وارد کنید:');
+            bot.once('message', async (m4) => {
+              const job = m4.text;
+              bot.sendMessage(chatId, 'هدف خود را وارد کنید:');
+              bot.once('message', async (m5) => {
+                const goal = m5.text;
+                await pool.query(
+                  'UPDATE users SET name=$1, age=$2, city=$3, job=$4, goal=$5 WHERE telegram_id=$6',
+                  [name, age, city, job, goal, chatId]
+                );
+                bot.sendMessage(chatId, '✅ اطلاعات با موفقیت ویرایش شد.', mainMenu());
+
+                // گزارش ویرایش به ادمین
+                bot.sendMessage(
+                  ADMIN_ID,
+                  `✏️ ویرایش اطلاعات کاربر\n👤 نام: ${name}\n🎂 سن: ${age}\n🏙 شهر: ${city}\n💼 شغل: ${job}\n🎯 هدف: ${goal}\n@${user.username}\n🕒 ${getPersianDate()}`
+                );
+              });
+            });
+          });
+        });
+      });
+    }
   }
 
-  // ---------- ارسال پیام به ادمین ----------
-  if (text === '💬 ارسال پیام به ادمین') {
-    bot.sendMessage(chatId, `پیام خود را ارسال کنید:`);
-    bot.once('message', async (userMsg) => {
-      const message = userMsg.text;
-      await db.run(
-        `INSERT INTO messages (telegram_id, username, message) VALUES (?, ?, ?)`,
-        [chatId, username, message]
+  // ارسال پیام به ادمین
+  else if (text === '💬 ارسال پیام به ادمین') {
+    bot.sendMessage(chatId, 'پیام خود را وارد کنید:');
+    bot.once('message', async (m) => {
+      const msgText = m.text;
+      const username = msg.from.username || '';
+      await pool.query(
+        'INSERT INTO messages (telegram_id, username, message) VALUES ($1,$2,$3)',
+        [chatId, username, msgText]
       );
-      const adminId = 'YOUR_ADMIN_TELEGRAM_ID';
-      bot.sendMessage(adminId, `پیام جدید از ${username}:\n\n${message}`);
-      bot.sendMessage(chatId, `پیام شما با موفقیت ارسال شد.`);
+      bot.sendMessage(chatId, '✅ پیام شما برای ادمین ارسال شد.', mainMenu());
+      bot.sendMessage(ADMIN_ID, `💬 پیام از کاربر\n@${username}\n${msgText}\n🕒 ${getPersianDate()}`);
     });
-    return;
   }
 
-  // ---------- هوش مصنوعی ----------
-  if (text === '🤖 هوش مصنوعی') {
-    bot.sendMessage(chatId, `سوالی دارید؟`);
-    bot.once('message', async (aiMsg) => {
-      const question = aiMsg.text;
-      try {
-        const response = await axios.post(
-          'https://api.openai.com/v1/chat/completions',
-          {
-            model: 'gpt-3.5-turbo',
-            messages: [{ role: 'user', content: question }]
-          },
-          {
-            headers: { 'Authorization': `Bearer ${AI_API_KEY}` }
-          }
-        );
-        const answer = response.data.choices[0].message.content;
-        bot.sendMessage(chatId, answer);
-      } catch (e) {
-        bot.sendMessage(chatId, `خطا در اتصال به هوش مصنوعی.`);
-      }
+  // هوش مصنوعی
+  else if (text === '🤖 هوش مصنوعی') {
+    bot.sendMessage(chatId, 'سوال خود را برای هوش مصنوعی وارد کنید:');
+    bot.once('message', async (m) => {
+      const question = m.text;
+      // پاسخ هوش مصنوعی (مثال ساده)
+      const answer = `💡 پاسخ به سوال شما: ${question}`;
+      bot.sendMessage(chatId, answer, mainMenu());
     });
-    return;
   }
 
-  // ---------- کانال رایگان ----------
-  if (text === '📢 کانال رایگان') {
-    bot.sendMessage(chatId, `📌 لینک کانال رایگان: https://t.me/freechannel`);
-    return;
+  // کانال رایگان
+  else if (text === '📢 کانال رایگان') {
+    bot.sendMessage(chatId, `📢 کانال رایگان: ${FREE_CHANNEL}`, mainMenu());
   }
 
-  // ---------- عضویت VIP ----------
-  if (text === '💎 عضویت VIP') {
-    bot.sendMessage(chatId, `برای عضویت VIP لطفاً مبلغ را به آدرس کریپتو ارسال کرده و رسید را بفرستید.`);
-    return;
+  // عضویت VIP
+  else if (text === '🌟 عضویت VIP') {
+    bot.sendMessage(chatId, `🌟 عضویت VIP\n${VIP_PRICE_TEXT}\nلطفاً رسید را ارسال کنید:`);
+    bot.once('message', async (m) => {
+      const receipt = m.text;
+      const username = msg.from.username || '';
+      await pool.query(
+        'INSERT INTO vip_requests (telegram_id, username, receipt) VALUES ($1,$2,$3)',
+        [chatId, username, receipt]
+      );
+      bot.sendMessage(chatId, '✅ درخواست VIP شما ثبت شد. بعد از تایید ادمین، لینک کانال VIP ارسال خواهد شد.', mainMenu());
+      bot.sendMessage(ADMIN_ID, `🌟 درخواست VIP\n@${username}\nرسید: ${receipt}\n🕒 ${getPersianDate()}`);
+    });
   }
 });
-
-// ---------- سرور اکسپرس ----------
-const app = express();
-app.get('/', (req, res) => res.send('Bot is running'));
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
