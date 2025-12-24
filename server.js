@@ -30,9 +30,17 @@ const states = {};
 // ساخت جدول‌های لازم
 async function createTables() {
   try {
-    // ۱. جدول users - حتماً PRIMARY KEY
+    // ۱. حذف جدول‌های وابسته برای جلوگیری از خطا
+    await pool.query('DROP TABLE IF EXISTS vips CASCADE;');
+    await pool.query('DROP TABLE IF EXISTS broadcast_messages CASCADE;');
+    await pool.query('DROP TABLE IF EXISTS settings CASCADE;');
+    await pool.query('DROP TABLE IF EXISTS users CASCADE;');
+    await pool.query('DROP TABLE IF EXISTS messages CASCADE;');
+    await pool.query('DROP TABLE IF EXISTS vip_requests CASCADE;');
+    
+    // ۲. ساخت جدول users (با PRIMARY KEY)
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE users (
         telegram_id BIGINT PRIMARY KEY,
         name VARCHAR(255),
         age INTEGER,
@@ -47,9 +55,9 @@ async function createTables() {
       );
     `);
 
-    // ۲. جدول vips - بعد از users
+    // ۳. ساخت جدول vips (بعد از users)
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS vips (
+      CREATE TABLE vips (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         start_date TIMESTAMP,
@@ -59,9 +67,9 @@ async function createTables() {
       );
     `);
 
-    // ۳. جدول settings
+    // ۴. ساخت جدول settings
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS settings (
+      CREATE TABLE settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
         ai_token TEXT,
         free_channel TEXT,
@@ -73,9 +81,9 @@ async function createTables() {
     `);
     await pool.query(`INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;`);
 
-    // ۴. جدول بایگانی پیام همگانی
+    // ۵. ساخت جدول broadcast_messages
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS broadcast_messages (
+      CREATE TABLE broadcast_messages (
         id SERIAL PRIMARY KEY,
         admin_id BIGINT NOT NULL,
         target_type VARCHAR(50) NOT NULL,
@@ -89,10 +97,10 @@ async function createTables() {
       );
     `);
 
-    console.log('جدول‌ها با موفقیت ساخته/به‌روزرسانی شدند.');
+    console.log('تمام جدول‌ها حذف و مجدداً ساخته شدند.');
   } catch (error) {
-    console.error('خطا در ساخت جدول‌ها:', error.message);
-    // اگر خطا بود، لاگ دقیق نمایش بده تا بفهمیم کجا مشکل داره
+    console.error('خطا در ساخت/حذف جدول‌ها:', error.message);
+    console.error('جزئیات کامل خطا:', error.stack);
   }
 }
 
