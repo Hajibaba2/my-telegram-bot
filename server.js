@@ -28,12 +28,12 @@ let openai = null;
 const states = {};
 
 // ساخت جدول‌های لازم
+
 async function createTables() {
   try {
-        
-    // ۲. ساخت جدول users (با PRIMARY KEY)
+    // ۱. جدول users - اگر وجود نداشته باشد بساز، اگر داشته باشد فقط ستون‌های جدید اضافه کن
     await pool.query(`
-      CREATE TABLE users (
+      CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
         name VARCHAR(255),
         age INTEGER,
@@ -48,9 +48,15 @@ async function createTables() {
       );
     `);
 
-    // ۳. ساخت جدول vips (بعد از users)
+    // اگر جدول وجود داشت، مطمئن شو telegram_id PRIMARY KEY باشه
     await pool.query(`
-      CREATE TABLE vips (
+      ALTER TABLE users 
+      ADD PRIMARY KEY IF NOT EXISTS (telegram_id);
+    `).catch(() => {}); // اگر قبلاً PK داشته باشد، خطا را نادیده بگیر
+
+    // ۲. جدول vips - فقط اگر وجود نداشته باشد
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS vips (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         start_date TIMESTAMP,
@@ -60,9 +66,9 @@ async function createTables() {
       );
     `);
 
-    // ۴. ساخت جدول settings
+    // ۳. جدول settings
     await pool.query(`
-      CREATE TABLE settings (
+      CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
         ai_token TEXT,
         free_channel TEXT,
@@ -74,9 +80,9 @@ async function createTables() {
     `);
     await pool.query(`INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;`);
 
-    // ۵. ساخت جدول broadcast_messages
+    // ۴. جدول broadcast_messages
     await pool.query(`
-      CREATE TABLE broadcast_messages (
+      CREATE TABLE IF NOT EXISTS broadcast_messages (
         id SERIAL PRIMARY KEY,
         admin_id BIGINT NOT NULL,
         target_type VARCHAR(50) NOT NULL,
@@ -90,10 +96,9 @@ async function createTables() {
       );
     `);
 
-    console.log('تمام جدول‌ها حذف و مجدداً ساخته شدند.');
+    console.log('جدول‌ها با موفقیت ساخته/به‌روزرسانی شدند (بدون حذف داده‌ها).');
   } catch (error) {
-    console.error('خطا در ساخت/حذف جدول‌ها:', error.message);
-    console.error('جزئیات کامل خطا:', error.stack);
+    console.error('خطا در ساخت جدول‌ها:', error.message);
   }
 }
 
