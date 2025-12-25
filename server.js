@@ -11,6 +11,12 @@ const { OpenAI } = require('openai');
 const app = express();
 app.use(express.json());
 
+// هندلر callback_query برای دکمه‌های VIP - حتماً async باشد
+bot.on('callback_query', async (callback) => {
+  const chatId = callback.message.chat.id;
+  const data = callback.data;
+
+
 // متغیرهای محیطی
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID);
@@ -216,29 +222,7 @@ bot.on('message', async (msg) => {
         }
       });
 
-  // هندلر callback_query برای دکمه‌های VIP - حتماً async باشد
-
-  bot.on('callback_query', async (callback) => {
-  const chatId = callback.message.chat.id;
-  const data = callback.data;
-
-  try {
-    // همیشه answerCallbackQuery را فراخوانی کن تا دکمه "لودینگ" تمام شود
-    await bot.answerCallbackQuery(callback.id);
-
-    if (data === 'vip_receipt') {
-      bot.sendMessage(chatId, '📸 لطفاً عکس فیش واریزی را ارسال کنید.');
-      states[chatId] = { type: 'vip_receipt' };
-    } else if (data === 'vip_cancel') {
-      bot.sendMessage(chatId, '❌ عضویت VIP لغو شد.\nبه منوی اصلی بازگشتید.', mainKeyboard(true, chatId === ADMIN_CHAT_ID));
-      bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${chatId} از عضویت VIP انصراف داد.`);
-      delete states[chatId];
-    }
-  } catch (error) {
-    console.error('خطا در callback_query:', error.message);
-    await bot.answerCallbackQuery(callback.id, { text: 'خطایی رخ داد!', show_alert: true });
-  }
-});
+  
       states[id] = { type: 'vip_waiting' };
     } else {
       bot.sendMessage(id, '⚠️ اطلاعات VIP تنظیم نشده است.');
@@ -593,7 +577,23 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
   }
 });
 
+try {
+    // همیشه answerCallbackQuery را فراخوانی کن تا دکمه "لودینگ" تمام شود
+    await bot.answerCallbackQuery(callback.id);
 
+    if (data === 'vip_receipt') {
+      bot.sendMessage(chatId, '📸 لطفاً عکس فیش واریزی را ارسال کنید.');
+      states[chatId] = { type: 'vip_receipt' };
+    } else if (data === 'vip_cancel') {
+      bot.sendMessage(chatId, '❌ عضویت VIP لغو شد.\nبه منوی اصلی بازگشتید.', mainKeyboard(true, chatId === ADMIN_CHAT_ID));
+      bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${chatId} از عضویت VIP انصراف داد.`);
+      delete states[chatId];
+    }
+  } catch (error) {
+    console.error('خطا در callback_query:', error.message);
+    await bot.answerCallbackQuery(callback.id, { text: 'خطایی رخ داد!', show_alert: true });
+  }
+});
 
 
 
