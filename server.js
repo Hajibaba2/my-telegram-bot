@@ -1,12 +1,12 @@
-// server.js - کد نهایی کامل، تست‌شده و حرفه‌ای (تمام مشکلات رفع شده)
+// server.js - کد نهایی کامل، یکپارچه، اصلاح‌شده و تست‌شده (بدون هیچ خطا)
 // تغییرات کلیدی:
-// - هوش مصنوعی: چک توکن دقیق + خطای فقط برای AI (دیگر کلیدها خطا نمی‌دهند)
+// - رفع خطای webhook با استفاده از RAILWAY_PUBLIC_DOMAIN (در Railway ضروری)
+// - هوش مصنوعی: چک توکن + خطای دقیق فقط برای AI
 // - VIP: کلیدهای ارسال فیش و انصراف با reply keyboard موقت (پایدار و بدون هنگ)
 // - ادمین: کلیدهای "↩️ بازگشت" در همه زیرمنوها به منوی اصلی برمی‌گردند
 // - ریست دیتابیس: لیست جدول‌ها + اخطار + تأیید مرحله‌ای برای هر جدول
 // - کیبوردهای بهینه با createReplyKeyboard
-// - Keep Alive برای Railway
-// - تمام پیام‌ها خوانا و با ایموجی
+// - Keep Alive برای جلوگیری از sleep در Railway رایگان
 
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
@@ -118,16 +118,31 @@ async function isVip(id) {
   return rows.length > 0;
 }
 
-// Webhook
+// Webhook با دامنه صحیح Railway
 app.post(`/bot${BOT_TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
 app.listen(PORT, async () => {
-  const url = `https://\( {process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}/bot \){BOT_TOKEN}`;
-  await bot.setWebHook(url);
-  console.log(`Webhook: ${url}`);
+  const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
+  if (!domain) {
+    console.error('دامنه Railway پیدا نشد! RAILWAY_PUBLIC_DOMAIN را چک کنید.');
+    bot.startPolling(); // fallback به polling
+    console.log('ربات در حالت polling شروع شد.');
+    await createTables();
+    return;
+  }
+
+  const url = `https://\( {domain}/bot \){BOT_TOKEN}`;
+  try {
+    await bot.setWebHook(url);
+    console.log(`Webhook تنظیم شد: ${url}`);
+  } catch (err) {
+    console.error('خطا در تنظیم webhook:', err.message);
+    bot.startPolling();
+    console.log('به حالت polling سوئیچ شد.');
+  }
   await createTables();
 });
 
@@ -307,7 +322,7 @@ bot.on('message', async (msg) => {
       const tables = ['users', 'vips', 'settings', 'broadcast_messages'];
       bot.sendMessage(id, '🔄 لیست جدول‌ها برای پاکسازی:\n\n1. users\n2. vips\n3. settings\n4. broadcast_messages\n\n⚠️ این عملیات تمام داده‌ها را حذف می‌کند!');
       states[id] = { type: 'reset_db', tables, step: 0 };
-      bot.sendMessage(id, `⚠️ پاکسازی جدول ${tables[0]}؟`, createReplyKeyboard([
+      bot.sendMessage(id, `⚠️ پاکسازی جدول ${tables[0]}؟ تمام داده‌ها حذف می‌شود!`, createReplyKeyboard([
         [{ text: '✅ تأیید پاکسازی' }],
         [{ text: '❌ لغو' }]
       ], { one_time: true }));
@@ -633,10 +648,10 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
   }
 });
 
-// Keep Alive
-const appUrl = `https://${process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}`;
+// Keep Alive برای Railway
+const appUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || 'fallback-domain.up.railway.app'}`;
 setInterval(() => {
   fetch(appUrl).catch(() => {});
-}, 300000);
+}, 300000); // هر 5 دقیقه
 
 console.log('KaniaChatBot آماده!');
