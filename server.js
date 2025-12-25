@@ -1,4 +1,6 @@
-// کد نهایی کامل و بهینه server.js - تمام قابلیت‌ها، بدون خطا، با پنل ادمین کامل
+// server.js - کد نهایی کامل، مستقل و بهینه (بدون نیاز به کد قبلی)
+// تمام قابلیت‌ها: ثبت‌نام، ویرایش با منو، VIP با دکمه inline، پنل ادمین کامل، بایگانی، پیام همگانی
+// رفع تمام خطاها (SQL، Markdown، await، NaN)
 
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
@@ -9,23 +11,23 @@ const { OpenAI } = require('openai');
 const app = express();
 app.use(express.json());
 
+// متغیرهای محیطی
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID);
 const PORT = process.env.PORT || 3000;
 
+// اتصال به دیتابیس
 const pool = new Pool({
-  user: process.env.DB_USER || process.env.POSTGRES_USER,
-  password: process.env.DB_PASSWORD || process.env.POSTGRES_PASSWORD,
-  host: process.env.DB_HOST || process.env.POSTGRES_HOST,
-  port: process.env.DB_PORT || process.env.POSTGRES_PORT || 5432,
-  database: process.env.DB_NAME || process.env.POSTGRES_DB || 'railway',
+  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
 const bot = new TelegramBot(BOT_TOKEN);
 let openai = null;
 
-const states = {};
+const states = {}; // حالت‌های موقت کاربران
 
+// ساخت جدول‌ها
 async function createTables() {
   try {
     await pool.query(`
@@ -90,6 +92,7 @@ async function createTables() {
   }
 }
 
+// چک VIP
 async function isVip(id) {
   const { rows } = await pool.query(
     'SELECT 1 FROM vips WHERE telegram_id = $1 AND approved AND end_date > NOW()',
@@ -98,19 +101,20 @@ async function isVip(id) {
   return rows.length > 0;
 }
 
+// Webhook
 app.post(`/bot${BOT_TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
 app.listen(PORT, async () => {
-  const url = `https://${process.env.RAILWAY_STATIC_URL || 'your-domain.com'}/bot${BOT_TOKEN}`;
+  const url = `https://${process.env.RAILWAY_STATIC_URL || 'your-app.up.railway.app'}/bot${BOT_TOKEN}`;
   await bot.setWebHook(url);
   console.log(`Webhook: ${url}`);
   await createTables();
 });
 
-// کیبوردها
+// کیبوردهای اصلی
 function mainKeyboard(reg, admin) {
   const k = [
     [{ text: '📺 کانال رایگان' }, { text: '💎 عضویت VIP' }],
@@ -164,13 +168,10 @@ bot.onText(/\/start/, async (msg) => {
   const reg = rows[0]?.name != null;
   const admin = id === ADMIN_CHAT_ID;
 
-  bot.sendMessage(id, '🌟 *به KaniaChatBot خوش آمدید!* 🌟\n\nلطفاً از منوی زیر استفاده کنید 👇', {
-    parse_mode: 'Markdown',
-    ...mainKeyboard(reg, admin),
-  });
+  bot.sendMessage(id, '🌟 به ربات KaniaChatBot خوش آمدید! 🌟\n\nلطفاً از منوی زیر استفاده کنید 👇', mainKeyboard(reg, admin));
 });
 
-// هندلر اصلی پیام‌ها
+// هندلر پیام‌ها
 bot.on('message', async (msg) => {
   const id = msg.chat.id;
   const text = msg.text || '';
@@ -189,24 +190,22 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // کاربر عادی
   if (text === '📺 کانال رایگان') {
     const { rows } = await pool.query('SELECT free_channel FROM settings');
-    bot.sendMessage(id, `📢 *کانال رایگان:*\n${rows[0]?.free_channel || 'تنظیم نشده ⚠️'}`, { parse_mode: 'Markdown' });
+    bot.sendMessage(id, `📢 کانال رایگان:\n${rows[0]?.free_channel || 'تنظیم نشده ⚠️'}`);
   }
 
   if (text === '💎 عضویت VIP') {
     const { rows } = await pool.query('SELECT membership_fee, wallet_address, network FROM settings');
     const s = rows[0];
     if (s?.membership_fee && s?.wallet_address && s?.network) {
-      const msgText = `💎 *عضویت VIP* 💎\n\n` +
-        `📌 مبلغ: *${s.membership_fee}*\n\n` +
-        `💳 آدرس کیف پول:\n\`${s.wallet_address}\`\n\n` +
-        `🌐 شبکه: *${s.network}*\n\n` +
+      const msgText = `💎 عضویت VIP 💎\n\n` +
+        `📌 مبلغ: ${s.membership_fee}\n\n` +
+        `💳 آدرس کیف پول (کپی کنید):\n${s.wallet_address}\n\n` +
+        `🌐 شبکه: ${s.network}\n\n` +
         `✅ پس از واریز، عکس فیش را ارسال کنید.`;
 
       bot.sendMessage(id, msgText, {
-        parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
             [{ text: '📸 ارسال عکس فیش', callback_data: 'vip_receipt' }],
@@ -216,48 +215,45 @@ bot.on('message', async (msg) => {
       });
       states[id] = { type: 'vip_waiting' };
     } else {
-      bot.sendMessage(id, '⚠️ *اطلاعات VIP تنظیم نشده.*', { parse_mode: 'Markdown' });
+      bot.sendMessage(id, '⚠️ اطلاعات VIP تنظیم نشده است.');
     }
   }
 
   if (text === '💬 چت با ادمین') {
-    bot.sendMessage(id, '💬 *پیام خود را بنویسید.*', { parse_mode: 'Markdown' });
+    bot.sendMessage(id, '💬 پیام خود را بنویسید.');
     states[id] = { type: 'chat_admin' };
   }
 
   if (text === '🤖 چت با هوش مصنوعی') {
-    bot.sendMessage(id, '🧠 *سوال خود را بپرسید*', { parse_mode: 'Markdown' });
+    bot.sendMessage(id, '🧠 سوال خود را بپرسید.');
     states[id] = { type: 'ai_chat' };
   }
 
-  // ثبت‌نام یا ویرایش
   if (text === '📝 ثبت‌نام' || text === '✏️ ویرایش اطلاعات') {
     const { rows } = await pool.query('SELECT name FROM users WHERE telegram_id = $1', [id]);
     const registered = rows.length > 0 && rows[0].name;
 
     if (!registered) {
       states[id] = { type: 'register_full', step: 0, data: { username: user } };
-      bot.sendMessage(id, '📝 *ثبت‌نام جدید*\n\n👤 نام خود را وارد کنید:', { parse_mode: 'Markdown' });
+      bot.sendMessage(id, '📝 ثبت‌نام جدید\n\n👤 نام خود را وارد کنید:');
     } else {
-      bot.sendMessage(id, '✏️ *کدام فیلد را می‌خواهید ویرایش کنید؟*', { parse_mode: 'Markdown', ...editKeyboard() });
+      bot.sendMessage(id, '✏️ کدام فیلد را می‌خواهید ویرایش کنید؟', editKeyboard());
       states[id] = { type: 'edit_menu' };
     }
   }
 
-  // پنل ادمین کامل
   if (admin) {
     if (text === '🛡️ پنل ادمین') {
-      bot.sendMessage(id, '🛡️ *پنل ادمین فعال شد* 👑', { parse_mode: 'Markdown', ...adminKeyboard() });
+      bot.sendMessage(id, '🛡️ پنل ادمین فعال شد', adminKeyboard());
     }
 
     if (text === '🤖 هوش مصنوعی') {
-      bot.sendMessage(id, '🔑 *توکن OpenAI را وارد کنید:*', { parse_mode: 'Markdown' });
+      bot.sendMessage(id, '🔑 توکن OpenAI را وارد کنید:');
       states[id] = { type: 'set_ai_token' };
     }
 
     if (text === '📺 کانال‌ها') {
-      bot.sendMessage(id, '⚙️ *تنظیمات کانال‌ها و VIP:*', {
-        parse_mode: 'Markdown',
+      bot.sendMessage(id, '⚙️ تنظیمات کانال‌ها و VIP:', {
         reply_markup: {
           keyboard: [
             [{ text: 'لینک کانال رایگان' }, { text: 'لینک کانال VIP' }],
@@ -278,35 +274,34 @@ bot.on('message', async (msg) => {
         'شبکه انتقال': 'network'
       };
       states[id] = { type: 'set_' + map[text] };
-      bot.sendMessage(id, `*مقدار جدید برای ${text} را وارد کنید:*`, { parse_mode: 'Markdown' });
+      bot.sendMessage(id, `مقدار جدید برای ${text} را وارد کنید:`);
     }
 
     if (text === '👥 کاربران') {
       const u = await pool.query('SELECT COUNT(*) FROM users');
       const v = await pool.query('SELECT COUNT(*) FROM vips WHERE approved');
-      bot.sendMessage(id, `👥 *آمار کاربران:*\n\nعادی: ${u.rows[0].count}\nVIP: ${v.rows[0].count}`, { parse_mode: 'Markdown' });
+      bot.sendMessage(id, `👥 کاربران:\nعادی: ${u.rows[0].count}\nVIP: ${v.rows[0].count}`);
     }
 
     if (text === '📊 آمار') {
       const s = await pool.query('SELECT COUNT(*) AS total, SUM(ai_questions_used) AS used FROM users');
-      bot.sendMessage(id, `📊 *آمار کلی:*\n\nکل کاربران: ${s.rows[0].total}\nسوالات AI استفاده شده: ${s.rows[0].used || 0}`, { parse_mode: 'Markdown' });
+      bot.sendMessage(id, `📊 آمار:\nکل کاربران: ${s.rows[0].total}\nسوالات AI: ${s.rows[0].used || 0}`);
     }
 
     if (text === '🔄 ریست دیتابیس') {
       await pool.query('DROP TABLE IF EXISTS broadcast_messages, vips, users, settings CASCADE;');
       await createTables();
-      bot.sendMessage(id, '🔄 *دیتابیس ریست شد.*', { parse_mode: 'Markdown' });
+      bot.sendMessage(id, '🔄 دیتابیس ریست شد.');
     }
 
     if (text === '📨 پیامرسانی') {
-      bot.sendMessage(id, '📨 *عملیات پیامرسانی:*', {
-        parse_mode: 'Markdown',
+      bot.sendMessage(id, '📨 پیامرسانی:', {
         reply_markup: {
           keyboard: [
-            [{ text: '📢 پیام همگانی (همه کاربران)' }],
-            [{ text: '📩 پیام به کاربران عادی' }],
-            [{ text: '💌 پیام به کاربران VIP' }],
-            [{ text: '📂 بایگانی پیام‌های همگانی' }],
+            [{ text: '📢 پیام همگانی (همه)' }],
+            [{ text: '📩 کاربران عادی' }],
+            [{ text: '💌 کاربران VIP' }],
+            [{ text: '📂 بایگانی' }],
             [{ text: '↩️ بازگشت' }]
           ],
           resize_keyboard: true
@@ -314,48 +309,43 @@ bot.on('message', async (msg) => {
       });
     }
 
-    if (text === '📢 پیام همگانی (همه کاربران)' || text === '📩 پیام به کاربران عادی' || text === '💌 پیام به کاربران VIP') {
-      let target = 'all';
-      if (text.includes('عادی')) target = 'normal';
-      if (text.includes('VIP')) target = 'vip';
+    if (text.startsWith('📢') || text.startsWith('📩') || text.startsWith('💌')) {
+      const target = text.includes('عادی') ? 'normal' : text.includes('VIP') ? 'vip' : 'all';
       states[id] = { type: 'broadcast', target };
-      bot.sendMessage(id, '📤 *پیام را ارسال کنید (متن، عکس، ویدیو...)*\nلغو: /cancel', { parse_mode: 'Markdown' });
+      bot.sendMessage(id, '📤 پیام را ارسال کنید\n/cancel برای لغو');
     }
 
-    if (text === '📂 بایگانی پیام‌های همگانی') {
-      const { rows } = await pool.query(`SELECT id, target_type, timestamp, sent_count, failed_count FROM broadcast_messages ORDER BY timestamp DESC LIMIT 20`);
-      if (rows.length === 0) {
-        bot.sendMessage(id, '📂 *بایگانی خالی است.*', { parse_mode: 'Markdown' });
-        return;
-      }
-      let msgText = '📂 *بایگانی (آخرین ۲۰ پیام):*\n\n';
+    if (text === '📂 بایگانی') {
+      const { rows } = await pool.query('SELECT id, target_type, timestamp, sent_count, failed_count FROM broadcast_messages ORDER BY timestamp DESC LIMIT 20');
+      if (!rows.length) return bot.sendMessage(id, 'بایگانی خالی است.');
+      let t = '📂 بایگانی (۲۰ آخر):\n\n';
       rows.forEach(r => {
-        const date = moment(r.timestamp).format('jYYYY/jM/jD - HH:mm');
-        const target = r.target_type === 'all' ? 'همه' : r.target_type === 'vip' ? 'VIP' : 'عادی';
-        msgText += `${r.id}. ${target} | ${date}\n   ✅${r.sent_count} ❌${r.failed_count}\n   /view_${r.id}\n\n`;
+        const d = moment(r.timestamp).format('jYYYY/jM/jD HH:mm');
+        const tg = r.target_type === 'all' ? 'همه' : r.target_type === 'vip' ? 'VIP' : 'عادی';
+        t += `${r.id}. ${tg} | ${d}\n✅${r.sent_count} ❌${r.failed_count}\n/view_${r.id}\n\n`;
       });
-      bot.sendMessage(id, msgText, { parse_mode: 'Markdown' });
+      bot.sendMessage(id, t);
     }
   }
 });
 
-// callback inline VIP
+// callback VIP
 bot.on('callback_query', async (cb) => {
   const id = cb.message.chat.id;
   if (cb.data === 'vip_receipt') {
     await bot.answerCallbackQuery(cb.id);
-    bot.sendMessage(id, '📸 *عکس فیش را ارسال کنید*', { parse_mode: 'Markdown' });
+    bot.sendMessage(id, '📸 عکس فیش را ارسال کنید');
     states[id] = { type: 'vip_receipt' };
   }
   if (cb.data === 'vip_cancel') {
     await bot.answerCallbackQuery(cb.id);
-    bot.sendMessage(id, '❌ *لغو شد*', { parse_mode: 'Markdown', ...mainKeyboard(true, id === ADMIN_CHAT_ID) });
-    bot.sendMessage(ADMIN_CHAT_ID, `⚠️ انصراف VIP از کاربر ${id}`);
+    bot.sendMessage(id, '❌ لغو شد', mainKeyboard(true, id === ADMIN_CHAT_ID));
+    bot.sendMessage(ADMIN_CHAT_ID, `انصراف VIP از ${id}`);
     delete states[id];
   }
 });
 
-// handleState کامل
+// مدیریت حالت‌ها
 async function handleState(id, text, msg) {
   const state = states[id];
   const admin = id === ADMIN_CHAT_ID;
@@ -381,10 +371,10 @@ async function handleState(id, text, msg) {
 
     if (fieldMap[text]) {
       states[id] = { type: 'edit_field', field: fieldMap[text], label: text };
-      bot.sendMessage(id, `✏️ مقدار جدید برای *${text}* را وارد کنید:`, { parse_mode: 'Markdown' });
+      bot.sendMessage(id, `مقدار جدید برای ${text} را وارد کنید:`);
       return;
     }
-    return; // کلیدهای کیبورد نادیده گرفته شوند
+    return;
   }
 
   // ویرایش تک فیلد
@@ -393,9 +383,9 @@ async function handleState(id, text, msg) {
     const value = field === 'age' ? (isNaN(parseInt(text)) ? null : parseInt(text)) : text.trim() || null;
 
     await pool.query(`UPDATE users SET ${field} = $1 WHERE telegram_id = $2`, [value, id]);
-    bot.sendMessage(id, `✅ *${state.label}* بروزرسانی شد!`, { parse_mode: 'Markdown' });
+    bot.sendMessage(id, `✅ ${state.label} بروزرسانی شد!`);
 
-    bot.sendMessage(id, '✏️ فیلد دیگری انتخاب کنید یا بازگشت بزنید:', { parse_mode: 'Markdown', ...editKeyboard() });
+    bot.sendMessage(id, 'فیلد دیگری انتخاب کنید یا بازگشت بزنید:', editKeyboard());
     states[id] = { type: 'edit_menu' };
     return;
   }
@@ -431,12 +421,12 @@ async function handleState(id, text, msg) {
       `, [id, state.data.username || null, state.data.name, ageVal, state.data.city,
           state.data.region, state.data.gender, state.data.job, state.data.goal, state.data.phone]);
 
-      bot.sendMessage(id, '✅ *ثبت‌نام با موفقیت انجام شد!* 🎉', { parse_mode: 'Markdown', ...mainKeyboard(true, admin) });
+      bot.sendMessage(id, '✅ ثبت‌نام با موفقیت انجام شد! 🎉', mainKeyboard(true, admin));
       delete states[id];
       return;
     }
 
-    bot.sendMessage(id, questions[state.step], { parse_mode: 'Markdown' });
+    bot.sendMessage(id, questions[state.step]);
     return;
   }
 
@@ -446,7 +436,7 @@ async function handleState(id, text, msg) {
     await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
     await bot.sendMessage(ADMIN_CHAT_ID, `📸 رسید از کاربر ${id}\n/approve_${id} یا /reject_${id}`);
     await pool.query('INSERT INTO vips (telegram_id, payment_receipt) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, fileId]);
-    bot.sendMessage(id, '✅ *رسید ارسال شد. منتظر تأیید باشید.*', { parse_mode: 'Markdown' });
+    bot.sendMessage(id, '✅ رسید ارسال شد. منتظر تأیید باشید.');
     delete states[id];
     return;
   }
@@ -454,7 +444,7 @@ async function handleState(id, text, msg) {
   // چت با ادمین
   if (state.type === 'chat_admin') {
     await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
-    bot.sendMessage(id, '✅ *پیام ارسال شد.*', { parse_mode: 'Markdown' });
+    bot.sendMessage(id, '✅ پیام ارسال شد.');
     delete states[id];
     return;
   }
@@ -464,7 +454,7 @@ async function handleState(id, text, msg) {
     const vip = await isVip(id);
     const u = await pool.query('SELECT ai_questions_used FROM users WHERE telegram_id = $1', [id]);
     if (!vip && (u.rows[0]?.ai_questions_used || 0) >= 5) {
-      bot.sendMessage(id, '⚠️ *سوالات رایگان تمام شد. VIP شوید.*', { parse_mode: 'Markdown' });
+      bot.sendMessage(id, '⚠️ سوالات رایگان تمام شد. VIP شوید.');
       delete states[id];
       return;
     }
@@ -522,7 +512,7 @@ async function handleState(id, text, msg) {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
     `, [ADMIN_CHAT_ID, state.target, text, media_type, media_file_id, caption, success, failed]);
 
-    bot.sendMessage(id, `📊 *گزارش:*\nموفق: ${success}\nناموفق: ${failed}\nکل: ${userIds.length}`, { parse_mode: 'Markdown' });
+    bot.sendMessage(id, `📊 گزارش:\nموفق: ${success}\nناموفق: ${failed}\nکل: ${userIds.length}`);
     delete states[id];
     return;
   }
@@ -538,7 +528,7 @@ async function handleState(id, text, msg) {
     else if (state.type === 'set_network') field = 'network';
 
     await pool.query(`UPDATE settings SET ${field} = $1`, [text]);
-    bot.sendMessage(id, '✅ *تنظیمات ذخیره شد.*', { parse_mode: 'Markdown' });
+    bot.sendMessage(id, '✅ تنظیمات ذخیره شد.');
     if (state.type === 'set_ai_token') openai = new OpenAI({ apiKey: text });
     delete states[id];
     return;
@@ -546,7 +536,7 @@ async function handleState(id, text, msg) {
 
   if (text === '/cancel') {
     delete states[id];
-    bot.sendMessage(id, '❌ *عملیات لغو شد.*', { parse_mode: 'Markdown' });
+    bot.sendMessage(id, '❌ عملیات لغو شد.');
   }
 }
 
@@ -557,7 +547,7 @@ bot.onText(/\/approve_(\d+)/, async (msg, match) => {
   const end = moment().add(1, 'month').toDate();
   await pool.query('UPDATE vips SET approved = TRUE, start_date = NOW(), end_date = $1 WHERE telegram_id = $2', [end, uid]);
   const { rows } = await pool.query('SELECT vip_channel FROM settings');
-  bot.sendMessage(uid, `🎉 *عضویت VIP تأیید شد!*\n\nتا ${moment(end).format('jYYYY/jM/jD')} معتبر است.\nکانال VIP: ${rows[0]?.vip_channel || 'تنظیم نشده'}`, { parse_mode: 'Markdown' });
+  bot.sendMessage(uid, `🎉 عضویت VIP تأیید شد!\nتا ${moment(end).format('jYYYY/jM/jD')} معتبر است.\nکانال VIP: ${rows[0]?.vip_channel || 'تنظیم نشده'}`);
   bot.sendMessage(ADMIN_CHAT_ID, `✅ کاربر ${uid} VIP شد.`);
 });
 
@@ -565,7 +555,7 @@ bot.onText(/\/reject_(\d+)/, async (msg, match) => {
   if (msg.chat.id !== ADMIN_CHAT_ID) return;
   const uid = match[1];
   await pool.query('UPDATE vips SET approved = FALSE WHERE telegram_id = $1', [uid]);
-  bot.sendMessage(uid, '❌ *رسید تأیید نشد. دوباره تلاش کنید.*', { parse_mode: 'Markdown' });
+  bot.sendMessage(uid, '❌ رسید تأیید نشد. دوباره تلاش کنید.');
   bot.sendMessage(ADMIN_CHAT_ID, `❌ رسید کاربر ${uid} رد شد.`);
 });
 
@@ -579,14 +569,14 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
   const row = rows[0];
   const date = moment(row.timestamp).format('jYYYY/jM/jD - HH:mm');
   const target = row.target_type === 'all' ? 'همه' : row.target_type === 'vip' ? 'VIP' : 'عادی';
-  const caption = `📋 *جزئیات*\nشناسه: ${row.id}\nهدف: ${target}\nتاریخ: ${date}\nموفق: ${row.sent_count}\nناموفق: ${row.failed_count}`;
+  const caption = `📋 جزئیات\nشناسه: ${row.id}\nهدف: ${target}\nتاریخ: ${date}\nموفق: ${row.sent_count}\nناموفق: ${row.failed_count}`;
 
   try {
     if (row.media_type === 'photo') await bot.sendPhoto(id, row.media_file_id, { caption: row.caption || row.message_text });
     else if (row.media_type === 'video') await bot.sendVideo(id, row.media_file_id, { caption: row.caption || row.message_text });
     else if (row.media_type === 'document') await bot.sendDocument(id, row.media_file_id, { caption: row.caption || row.message_text });
     else await bot.sendMessage(id, row.message_text || '(بدون متن)');
-    bot.sendMessage(id, caption, { parse_mode: 'Markdown' });
+    bot.sendMessage(id, caption);
   } catch (e) {
     bot.sendMessage(id, 'خطا در نمایش رسانه.');
   }
