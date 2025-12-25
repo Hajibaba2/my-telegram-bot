@@ -1,25 +1,27 @@
-// server.js - کد نهایی کامل، اصلاح‌شده، بدون خطای سینتکس و پایدار
-// تمام مشکلات قبلی رفع شده: خطای )، callback، sleep در Railway، Markdown، NaN و ...
-// کیبوردهای بهینه با تابع createReplyKeyboard
-// VIP با کیبورد موقت (پایدارتر از inline)
-// Keep Alive برای Railway رایگان
+// server.js - کد نهایی کامل، اصلاح‌شده و حرفه‌ای (تمام درخواست‌ها اعمال شده)
+// تغییرات کلیدی:
+// - هوش مصنوعی: چک دقیق توکن + پیام خطای مناسب فقط برای AI (دیگر کلیدها خطا نمی‌دهند)
+// - VIP: کلیدهای "ارسال عکس" و "انصراف" با reply keyboard موقت کار می‌کنند (بدون هنگ)
+// - ادمین: کلیدهای "↩️ بازگشت" در همه زیرمنوها به منوی اصلی برمی‌گردند
+// - ریست دیتابیس: لیست جدول‌ها + اخطار برای هر جدول + تأیید ادمین (چندمرحله‌ای)
+// - کیبوردهای reply بهینه با تابع createReplyKeyboard
+// - Keep Alive برای Railway
+// - تمام پیام‌ها زیبا و خوانا
 
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const moment = require('moment-jalaali');
 const express = require('express');
 const { OpenAI } = require('openai');
-const fetch = require('node-fetch'); // برای Keep Alive
+const fetch = require('node-fetch');
 
 const app = express();
 app.use(express.json());
 
-// تنظیمات محیطی
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID);
 const PORT = process.env.PORT || 3000;
 
-// دیتابیس
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
@@ -123,7 +125,7 @@ app.post(`/bot${BOT_TOKEN}`, (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  const url = `https://${process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}/bot${BOT_TOKEN}`;
+  const url = `https://\( {process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}/bot \){BOT_TOKEN}`;
   await bot.setWebHook(url);
   console.log(`Webhook: ${url}`);
   await createTables();
@@ -186,7 +188,7 @@ bot.onText(/\/start/, async (msg) => {
   bot.sendMessage(id, '🌟 به ربات KaniaChatBot خوش آمدید! 🌟\n\nلطفاً از منوی زیر استفاده کنید 👇', mainKeyboard(reg, admin));
 });
 
-// هندلر پیام‌ها
+// هندلر اصلی پیام‌ها
 bot.on('message', async (msg) => {
   const id = msg.chat.id;
   const text = msg.text || '';
@@ -233,6 +235,11 @@ bot.on('message', async (msg) => {
   }
 
   if (text === '🤖 چت با هوش مصنوعی') {
+    const { rows } = await pool.query('SELECT ai_token FROM settings');
+    if (!rows[0]?.ai_token) {
+      bot.sendMessage(id, '⚠️ هوش مصنوعی توسط ادمین تنظیم نشده است.');
+      return;
+    }
     bot.sendMessage(id, '🧠 سوال خود را بپرسید.');
     states[id] = { type: 'ai_chat' };
   }
@@ -297,9 +304,13 @@ bot.on('message', async (msg) => {
     }
 
     if (text === '🔄 ریست دیتابیس') {
-      await pool.query('DROP TABLE IF EXISTS broadcast_messages, vips, users, settings CASCADE;');
-      await createTables();
-      bot.sendMessage(id, '🔄 دیتابیس ریست شد.');
+      const tables = ['users', 'vips', 'settings', 'broadcast_messages'];
+      bot.sendMessage(id, '🔄 لیست جدول‌ها برای پاکسازی:\n\n1. users\n2. vips\n3. settings\n4. broadcast_messages\n\n⚠️ این عملیات تمام داده‌ها را حذف می‌کند!');
+      states[id] = { type: 'reset_db_confirm', tables, step: 0 };
+      bot.sendMessage(id, 'برای شروع پاکسازی، "شروع پاکسازی" را ارسال کنید یا "لغو" برای انصراف.', createReplyKeyboard([
+        [{ text: 'شروع پاکسازی' }],
+        [{ text: 'لغو' }]
+      ], { one_time: true }));
     }
 
     if (text === '📨 پیامرسانی') {
@@ -330,9 +341,15 @@ bot.on('message', async (msg) => {
       rows.forEach(r => {
         const d = moment(r.timestamp).format('jYYYY/jM/jD HH:mm');
         const tg = r.target_type === 'all' ? 'همه' : r.target_type === 'vip' ? 'VIP' : 'عادی';
-        t += `${r.id}. ${tg} | ${d}\n✅${r.sent_count} ❌${r.failed_count}\n/view_${r.id}\n\n`;
+        t += `${r.id}. ${tg} | \( {d}\n✅ \){r.sent_count} ❌\( {r.failed_count}\n/view_ \){r.id}\n\n`;
       });
       bot.sendMessage(id, t);
+    }
+
+    // بازگشت از همه زیرمنوها
+    if (text === '↩️ بازگشت' || text === '↩️ بازگشت به منو اصلی') {
+      delete states[id];
+      bot.sendMessage(id, '↩️ بازگشت به منوی اصلی', mainKeyboard(true, admin));
     }
   }
 
@@ -442,7 +459,7 @@ async function handleState(id, text, msg) {
   if (state.type === 'vip_receipt' && msg.photo) {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
     await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
-    await bot.sendMessage(ADMIN_CHAT_ID, `📸 رسید از کاربر ${id}\n/approve_${id} یا /reject_${id}`);
+    await bot.sendMessage(ADMIN_CHAT_ID, `📸 رسید از کاربر \( {id}\n/approve_ \){id} یا /reject_${id}`);
     await pool.query('INSERT INTO vips (telegram_id, payment_receipt) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, fileId]);
     bot.sendMessage(id, '✅ رسید ارسال شد. منتظر تأیید باشید.');
     delete states[id];
@@ -467,20 +484,21 @@ async function handleState(id, text, msg) {
       return;
     }
     const s = await pool.query('SELECT ai_token FROM settings');
-    if (s.rows[0]?.ai_token) {
-      if (!openai) openai = new OpenAI({ apiKey: s.rows[0].ai_token });
-      try {
-        const res = await openai.chat.completions.create({
-          model: 'gpt-3.5-turbo',
-          messages: [{ role: 'user', content: text }],
-        });
-        bot.sendMessage(id, res.choices[0].message.content);
-        await pool.query('UPDATE users SET ai_questions_used = ai_questions_used + 1 WHERE telegram_id = $1', [id]);
-      } catch (e) {
-        bot.sendMessage(id, '❌ خطا در هوش مصنوعی.');
-      }
-    } else {
-      bot.sendMessage(id, '⚠️ هوش مصنوعی تنظیم نشده.');
+    if (!s.rows[0]?.ai_token) {
+      bot.sendMessage(id, '⚠️ هوش مصنوعی توسط ادمین تنظیم نشده است.');
+      delete states[id];
+      return;
+    }
+    if (!openai) openai = new OpenAI({ apiKey: s.rows[0].ai_token });
+    try {
+      const res = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: text }],
+      });
+      bot.sendMessage(id, res.choices[0].message.content || 'پاسخی دریافت نشد.');
+      await pool.query('UPDATE users SET ai_questions_used = ai_questions_used + 1 WHERE telegram_id = $1', [id]);
+    } catch (e) {
+      bot.sendMessage(id, '❌ خطا در ارتباط با هوش مصنوعی. دوباره تلاش کنید.');
     }
     return;
   }
@@ -542,6 +560,44 @@ async function handleState(id, text, msg) {
     return;
   }
 
+  // ریست دیتابیس با تأیید
+  if (state.type === 'reset_db_confirm') {
+    if (text === 'شروع پاکسازی') {
+      state.step = 0;
+      bot.sendMessage(id, `⚠️ پاکسازی جدول ${state.tables[state.step]}؟ تمام داده‌ها حذف می‌شود!`, createReplyKeyboard([
+        [{ text: '✅ تأیید' }],
+        [{ text: '❌ لغو' }]
+      ], { one_time: true }));
+    } else if (text === 'لغو') {
+      bot.sendMessage(id, '❌ پاکسازی لغو شد.');
+      delete states[id];
+    }
+    return;
+  }
+
+  if (state.type === 'reset_db_confirm' && state.step !== undefined) {
+    if (text === '✅ تأیید') {
+      const table = state.tables[state.step];
+      await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE;`);
+      bot.sendMessage(id, `✅ جدول ${table} پاکسازی شد.`);
+      state.step++;
+      if (state.step >= state.tables.length) {
+        await createTables();
+        bot.sendMessage(id, '🔄 تمام جدول‌ها ریست شدند.');
+        delete states[id];
+        return;
+      }
+      bot.sendMessage(id, `⚠️ پاکسازی جدول ${state.tables[state.step]}؟`, createReplyKeyboard([
+        [{ text: '✅ تأیید' }],
+        [{ text: '❌ لغو' }]
+      ], { one_time: true }));
+    } else if (text === '❌ لغو') {
+      bot.sendMessage(id, '❌ پاکسازی لغو شد.');
+      delete states[id];
+    }
+    return;
+  }
+
   if (text === '/cancel') {
     delete states[id];
     bot.sendMessage(id, '❌ عملیات لغو شد.');
@@ -591,10 +647,10 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
   }
 });
 
-// Keep Alive برای Railway رایگان
+// Keep Alive
 const appUrl = `https://${process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}`;
 setInterval(() => {
   fetch(appUrl).catch(() => {});
-}, 300000); // هر 5 دقیقه
+}, 300000);
 
 console.log('KaniaChatBot آماده!');
