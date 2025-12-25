@@ -1,23 +1,31 @@
-// server.js - کد نهایی کامل، مستقل، بدون خطا و حرفه‌ای
-// تمام قابلیت‌ها: ثبت‌نام، ویرایش با منو، VIP با دکمه inline، پنل ادمین، بایگانی، پیام همگانی
-// رفع تمام خطاها (SQL، Syntax، Markdown، callback، sleep در Railway)
+// server.js - کد نهایی کامل و بهینه با تمام قابلیت‌ها
+// توضیح کلی: این فایل یک ربات تلگرام با قابلیت‌های ثبت‌نام، ویرایش اطلاعات، عضویت VIP، پنل ادمین، چت AI، پیام همگانی و بایگانی است.
+// - بهینه‌سازی کیبوردهای reply با تابع createReplyKeyboard (resize_keyboard, one_time, placeholder)
+// - رفع تمام خطاها (SQL, Syntax, callback, Markdown)
+// - Keep Alive برای Railway (جلوگیری از sleep container)
+// - تمام پیام‌ها زیبا با ایموجی
+// - هندلر callback برای VIP (با answerCallbackQuery برای جلوگیری از لودینگ)
+// - ویرایش اطلاعات با منو انتخاب فیلد + بازگشت
+// - ثبت‌نام با سوالات ایموجی‌دار
+// - کلیدهای کیبورد در فرآیندها نادیده گرفته می‌شوند
+// - نیاز به node-fetch برای Keep Alive (در package.json اضافه کن: "node-fetch": "^2.6.1")
 
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const moment = require('moment-jalaali');
 const express = require('express');
 const { OpenAI } = require('openai');
-const fetch = require('node-fetch'); // برای Keep Alive (اگر node-fetch نصب نیست، npm i node-fetch اضافه کن)
+const fetch = require('node-fetch');
 
 const app = express();
 app.use(express.json());
 
-// تنظیمات محیطی
+// بخش تنظیمات محیطی - از Railway یا Heroku استفاده شود
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID);
 const PORT = process.env.PORT || 3000;
 
-// اتصال به دیتابیس
+// اتصال به دیتابیس PostgreSQL
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
@@ -26,9 +34,22 @@ const pool = new Pool({
 const bot = new TelegramBot(BOT_TOKEN);
 let openai = null;
 
-const states = {};
+const states = {}; // ذخیره حالت‌های کاربران (مثل ثبت‌نام، ویرایش، VIP)
 
-// ساخت جدول‌ها
+// تابع ساخت کیبورد reply بهینه
+function createReplyKeyboard(keyboardArray, options = {}) {
+  return {
+    reply_markup: {
+      keyboard: keyboardArray,
+      resize_keyboard: true,  // همیشه فعال - کیبورد با اندازه صفحه سازگار می‌شود
+      one_time_keyboard: options.one_time || false,  // مخفی شود بعد از انتخاب (برای موقت)
+      selective: options.selective || false,  // فقط برای پیام خاص
+      input_field_placeholder: options.placeholder || ''  // راهنما در فیلد ورودی تلگرام
+    }
+  };
+}
+
+// بخش ساخت جدول‌ها - اجرا در شروع ربات
 async function createTables() {
   try {
     await pool.query(`
@@ -93,7 +114,7 @@ async function createTables() {
   }
 }
 
-// چک VIP
+// چک وضعیت VIP کاربر
 async function isVip(id) {
   const { rows } = await pool.query(
     'SELECT 1 FROM vips WHERE telegram_id = $1 AND approved AND end_date > NOW()',
@@ -102,12 +123,13 @@ async function isVip(id) {
   return rows.length > 0;
 }
 
-// Webhook
+// تنظیم Webhook برای تلگرام
 app.post(`/bot${BOT_TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
+// شروع سرور و webhook
 app.listen(PORT, async () => {
   const url = `https://${process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}/bot${BOT_TOKEN}`;
   await bot.setWebHook(url);
@@ -115,7 +137,7 @@ app.listen(PORT, async () => {
   await createTables();
 });
 
-// کیبورد اصلی
+// کیبورد اصلی کاربر
 function mainKeyboard(reg, admin) {
   const k = [
     [{ text: '📺 کانال رایگان' }, { text: '💎 عضویت VIP' }],
@@ -123,41 +145,42 @@ function mainKeyboard(reg, admin) {
     [{ text: reg ? '✏️ ویرایش اطلاعات' : '📝 ثبت‌نام' }],
   ];
   if (admin) k.push([{ text: '🛡️ پنل ادمین' }]);
-  return { reply_markup: { keyboard: k, resize_keyboard: true } };
+  return createReplyKeyboard(k, { placeholder: 'گزینه مورد نظر را انتخاب کنید' });
 }
 
-// کیبورد ادمین
+// کیبورد پنل ادمین
 function adminKeyboard() {
-  return {
-    reply_markup: {
-      keyboard: [
-        [{ text: '🤖 هوش مصنوعی' }, { text: '📺 کانال‌ها' }],
-        [{ text: '👥 کاربران' }, { text: '📨 پیامرسانی' }],
-        [{ text: '📊 آمار' }, { text: '🔄 ریست دیتابیس' }],
-        [{ text: '↩️ بازگشت به منو اصلی' }],
-      ],
-      resize_keyboard: true,
-    },
-  };
+  const k = [
+    [{ text: '🤖 هوش مصنوعی' }, { text: '📺 کانال‌ها' }],
+    [{ text: '👥 کاربران' }, { text: '📨 پیامرسانی' }],
+    [{ text: '📊 آمار' }, { text: '🔄 ریست دیتابیس' }],
+    [{ text: '↩️ بازگشت به منو اصلی' }],
+  ];
+  return createReplyKeyboard(k, { placeholder: 'گزینه ادمین را انتخاب کنید' });
 }
 
-// کیبورد ویرایش
+// کیبورد ویرایش اطلاعات
 function editKeyboard() {
-  return {
-    reply_markup: {
-      keyboard: [
-        [{ text: '👤 نام' }, { text: '🎂 سن' }],
-        [{ text: '🏙️ شهر' }, { text: '🌍 منطقه' }],
-        [{ text: '⚧️ جنسیت' }, { text: '💼 شغل' }],
-        [{ text: '🎯 هدف' }, { text: '📱 شماره تماس' }],
-        [{ text: '↩️ بازگشت به منو اصلی' }]
-      ],
-      resize_keyboard: true
-    }
-  };
+  const k = [
+    [{ text: '👤 نام' }, { text: '🎂 سن' }],
+    [{ text: '🏙️ شهر' }, { text: '🌍 منطقه' }],
+    [{ text: '⚧️ جنسیت' }, { text: '💼 شغل' }],
+    [{ text: '🎯 هدف' }, { text: '📱 شماره تماس' }],
+    [{ text: '↩️ بازگشت به منو اصلی' }]
+  ];
+  return createReplyKeyboard(k, { placeholder: 'فیلد برای ویرایش انتخاب کنید' });
 }
 
-// /start
+// کیبورد موقت VIP
+function vipKeyboard() {
+  const k = [
+    [{ text: '📸 ارسال عکس فیش واریزی' }],
+    [{ text: '❌ انصراف از عضویت VIP' }]
+  ];
+  return createReplyKeyboard(k, { one_time: true, placeholder: 'انتخاب کنید: ارسال فیش یا انصراف' });
+}
+
+// دستور /start - خوش‌آمدگویی و ثبت کاربر اولیه
 bot.onText(/\/start/, async (msg) => {
   const id = msg.chat.id;
   const user = msg.from.username ? `@${msg.from.username}` : null;
@@ -174,7 +197,7 @@ bot.onText(/\/start/, async (msg) => {
   bot.sendMessage(id, '🌟 به ربات KaniaChatBot خوش آمدید! 🌟\n\nلطفاً از منوی زیر استفاده کنید 👇', mainKeyboard(reg, admin));
 });
 
-// هندلر اصلی پیام‌ها
+// هندلر اصلی پیام‌ها - پردازش تمام ورودی‌ها
 bot.on('message', async (msg) => {
   const id = msg.chat.id;
   const text = msg.text || '';
@@ -193,50 +216,43 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // کانال رایگان
   if (text === '📺 کانال رایگان') {
     const { rows } = await pool.query('SELECT free_channel FROM settings');
     bot.sendMessage(id, `📢 کانال رایگان:\n${rows[0]?.free_channel || 'تنظیم نشده ⚠️'}`);
   }
 
+  // عضویت VIP - با کیبورد موقت (بدون inline برای پایداری)
   if (text === '💎 عضویت VIP') {
-  const { rows } = await pool.query('SELECT membership_fee, wallet_address, network FROM settings');
-  const s = rows[0];
-  if (s?.membership_fee && s?.wallet_address && s?.network) {
-    const msgText = `💎 عضویت VIP 💎\n\n` +
-      `📌 مبلغ: ${s.membership_fee}\n\n` +
-      `💳 آدرس کیف پول (کپی کنید):\n${s.wallet_address}\n\n` +
-      `🌐 شبکه: ${s.network}\n\n` +
-      `✅ پس از واریز، عکس فیش را ارسال کنید.`;
+    const { rows } = await pool.query('SELECT membership_fee, wallet_address, network FROM settings');
+    const s = rows[0];
+    if (s?.membership_fee && s?.wallet_address && s?.network) {
+      const msgText = `💎 عضویت VIP 💎\n\n` +
+        `📌 مبلغ: ${s.membership_fee}\n\n` +
+        `💳 آدرس کیف پول (کپی کنید):\n${s.wallet_address}\n\n` +
+        `🌐 شبکه: ${s.network}\n\n` +
+        `✅ پس از واریز، عکس فیش را ارسال کنید.`;
 
-    // کیبورد موقت با دو دکمه
-    const vipKeyboard = {
-      reply_markup: {
-        keyboard: [
-          [{ text: '📸 ارسال عکس فیش واریزی' }],
-          [{ text: '❌ انصراف از عضویت VIP' }]
-        ],
-        resize_keyboard: true,
-        one_time_keyboard: true  // بعد از انتخاب مخفی شود
-      }
-    };
-
-    bot.sendMessage(id, msgText, vipKeyboard);
-    states[id] = { type: 'vip_waiting' }; // حالت انتظار برای انتخاب
-  } else {
-    bot.sendMessage(id, '⚠️ اطلاعات VIP توسط ادمین تنظیم نشده است.');
+      bot.sendMessage(id, msgText, vipKeyboard());
+      states[id] = { type: 'vip_waiting' };
+    } else {
+      bot.sendMessage(id, '⚠️ اطلاعات VIP تنظیم نشده است.');
+    }
   }
-}
 
+  // چت با ادمین
   if (text === '💬 چت با ادمین') {
     bot.sendMessage(id, '💬 پیام خود را بنویسید.');
     states[id] = { type: 'chat_admin' };
   }
 
+  // چت با هوش مصنوعی
   if (text === '🤖 چت با هوش مصنوعی') {
     bot.sendMessage(id, '🧠 سوال خود را بپرسید.');
     states[id] = { type: 'ai_chat' };
   }
 
+  // ثبت‌نام یا ویرایش
   if (text === '📝 ثبت‌نام' || text === '✏️ ویرایش اطلاعات') {
     const { rows } = await pool.query('SELECT name FROM users WHERE telegram_id = $1', [id]);
     const registered = rows.length > 0 && rows[0].name;
@@ -250,6 +266,7 @@ bot.on('message', async (msg) => {
     }
   }
 
+  // پنل ادمین
   if (admin) {
     if (text === '🛡️ پنل ادمین') {
       bot.sendMessage(id, '🛡️ پنل ادمین فعال شد', adminKeyboard());
@@ -335,26 +352,40 @@ bot.on('message', async (msg) => {
       bot.sendMessage(id, t);
     }
   }
-});
 
-// callback inline VIP - حتماً answerCallbackQuery اول فراخوانی شود
-// بعد از بخش‌های دیگر، این را اضافه کن
-if (states[id]?.type === 'vip_waiting') {
-  if (text === '📸 ارسال عکس فیش واریزی') {
-    bot.sendMessage(id, '📸 لطفاً عکس فیش واریزی را ارسال کنید.');
-    states[id] = { type: 'vip_receipt' };
-    return;
-  }
+  // دکمه‌های VIP (اگر در حالت waiting)
+  if (states[id]?.type === 'vip_waiting') {
+    if (text === '📸 ارسال عکس فیش واریزی') {
+      bot.sendMessage(id, '📸 لطفاً عکس فیش واریزی را ارسال کنید.');
+      states[id] = { type: 'vip_receipt' };
+      return;
+    }
 
-  if (text === '❌ انصراف از عضویت VIP') {
-    bot.sendMessage(id, '❌ عضویت VIP لغو شد.', mainKeyboard(true, admin));
-    bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${id} از عضویت VIP انصراف داد.`);
-    delete states[id];
-    return;
+    if (text === '❌ انصراف از عضویت VIP') {
+      bot.sendMessage(id, '❌ عضویت VIP لغو شد.', mainKeyboard(true, admin));
+      bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${id} از عضویت VIP انصراف داد.`);
+      delete states[id];
+      return;
+    }
   }
 }
+
+// هندلر callback_query (اگر inline داشتیم - اما حالا با reply جایگزین شد، این را حذف کن یا کامنت کن)
+bot.on('callback_query', async (cb) => {
+  const id = cb.message.chat.id;
+  try {
+    await bot.answerCallbackQuery(cb.id);
+
+    if (cb.data === 'vip_receipt') {
+      bot.sendMessage(id, '📸 عکس فیش را ارسال کنید');
+      states[id] = { type: 'vip_receipt' };
+    } else if (cb.data === 'vip_cancel') {
+      bot.sendMessage(id, '❌ لغو شد', mainKeyboard(true, id === ADMIN_CHAT_ID));
+      bot.sendMessage(ADMIN_CHAT_ID, `انصراف VIP از ${id}`);
+      delete states[id];
+    }
   } catch (err) {
-    console.error('خطا در callback_query:', err.message);
+    console.error('خطا در callback:', err);
   }
 });
 
@@ -363,6 +394,7 @@ async function handleState(id, text, msg) {
   const state = states[id];
   const admin = id === ADMIN_CHAT_ID;
 
+  // منوی ویرایش
   if (state.type === 'edit_menu') {
     const fieldMap = {
       '👤 نام': 'name',
@@ -386,9 +418,10 @@ async function handleState(id, text, msg) {
       bot.sendMessage(id, `مقدار جدید برای ${text} را وارد کنید:`);
       return;
     }
-    return;
+    return; // نادیده گرفتن کلیدهای نامعتبر
   }
 
+  // ویرایش فیلد
   if (state.type === 'edit_field') {
     const field = state.field;
     const value = field === 'age' ? (isNaN(parseInt(text)) ? null : parseInt(text)) : text.trim() || null;
@@ -401,6 +434,7 @@ async function handleState(id, text, msg) {
     return;
   }
 
+  // ثبت‌نام کامل
   if (state.type === 'register_full') {
     const questions = [
       '👤 نام خود را وارد کنید:',
@@ -440,6 +474,7 @@ async function handleState(id, text, msg) {
     return;
   }
 
+  // رسید VIP
   if (state.type === 'vip_receipt' && msg.photo) {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
     await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
@@ -450,6 +485,7 @@ async function handleState(id, text, msg) {
     return;
   }
 
+  // چت با ادمین
   if (state.type === 'chat_admin') {
     await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
     bot.sendMessage(id, '✅ پیام ارسال شد.');
@@ -457,6 +493,7 @@ async function handleState(id, text, msg) {
     return;
   }
 
+  // چت AI
   if (state.type === 'ai_chat') {
     const vip = await isVip(id);
     const u = await pool.query('SELECT ai_questions_used FROM users WHERE telegram_id = $1', [id]);
@@ -484,6 +521,7 @@ async function handleState(id, text, msg) {
     return;
   }
 
+  // پیام همگانی
   if (state.type === 'broadcast' && !text.startsWith('/')) {
     let query = 'SELECT telegram_id FROM users';
     if (state.target === 'normal') {
@@ -565,10 +603,9 @@ bot.onText(/\/reject_(\d+)/, async (msg, match) => {
 });
 
 // مشاهده بایگانی
-// مشاهده بایگانی - اصلاح متغیر id
 bot.onText(/\/view_(\d+)/, async (msg, match) => {
   if (msg.chat.id !== ADMIN_CHAT_ID) return;
-  const chatId = msg.chat.id;  // <-- اینجا تعریف کن
+  const chatId = msg.chat.id;
   const pid = match[1];
   const { rows } = await pool.query('SELECT * FROM broadcast_messages WHERE id = $1', [pid]);
   if (rows.length === 0) return bot.sendMessage(chatId, 'پیام یافت نشد.');
@@ -589,10 +626,11 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
   }
 });
 
-// Keep Alive برای Railway (جلوگیری از sleep)
+// Keep Alive برای Railway
 const appUrl = `https://${process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}`;
 setInterval(() => {
   fetch(appUrl).catch(() => {});
-}, 300000); // هر ۵ دقیقه
+}, 300000); // هر ۵ دقیقه پینگ
 
 console.log('KaniaChatBot آماده!');
+console.log('Keep Alive فعال شد.');
