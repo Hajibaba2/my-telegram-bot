@@ -1,18 +1,30 @@
 {
   "name": "kania-chatbot",
-  "version": "1.0.0",
-  "description": "ربات تلگرام KaniaChatBot با مدیریت VIP، هوش مصنوعی، پیامرسانی همگانی و بایگانی",
+  "version": "2.0.0",
+  "description": "ربات حرفه‌ای تلگرام KaniaChatBot با امکانات ثبت‌نام، عضویت VIP، هوش مصنوعی OpenAI، پنل ادمین کامل، پیامرسانی همگانی و بایگانی",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "keywords": [
+    "telegram-bot",
+    "nodejs",
+    "postgresql",
+    "openai",
+    "vip-membership",
+    "admin-panel"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
   "dependencies": {
-    "node-telegram-bot-api": "^0.64.0",
-    "pg": "^8.11.3",
+    "express": "^4.19.2",
     "moment-jalaali": "^0.10.0",
-    "express": "^4.18.2",
-    "openai": "^4.24.1"
+    "node-fetch": "^2.7.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "openai": "^4.67.3",
+    "pg": "^8.12.0"
   },
-  "author": "",
-  "license": "MIT"
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }
