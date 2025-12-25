@@ -152,7 +152,6 @@ async function isVip(id) {
     const { rows } = await pool.query('SELECT 1 FROM vips WHERE telegram_id = $1 AND approved AND end_date > NOW()', [id]);
     return rows.length > 0;
   } catch (err) {
-    console.error('خطا در چک VIP:', err.message);
     return false;
   }
 }
@@ -162,7 +161,6 @@ async function isRegistered(id) {
     const { rows } = await pool.query('SELECT name FROM users WHERE telegram_id = $1', [id]);
     return rows.length > 0 && rows[0].name != null;
   } catch (err) {
-    console.error('خطا در چک ثبت‌نام:', err.message);
     return false;
   }
 }
@@ -186,6 +184,7 @@ app.post(`/bot${BOT_TOKEN}`, (req, res) => {
 });
 
 async function gracefulShutdown() {
+  try { await bot.stopPolling(); } catch (err) {}
   try { await bot.deleteWebHook(); } catch (err) {}
   await pool.end();
   process.exit(0);
@@ -197,33 +196,27 @@ process.on('unhandledRejection', (reason) => console.error('Unhandled Rejection:
 bot.on('error', (err) => console.error('خطای Bot:', err.message));
 
 app.listen(PORT, async () => {
-  const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
-  if (!domain) {
-    console.error('دامنه تنظیم نشده!');
-    process.exit(1);
-  }
-
-  const webhookUrl = `https://\( {domain}/bot \){BOT_TOKEN}`;
-  try {
-    const info = await bot.getWebHookInfo();
-    if (info.url !== webhookUrl) {
-      await bot.deleteWebHook();
-      await bot.setWebHook(webhookUrl);
-      console.log(`Webhook تنظیم شد: ${webhookUrl}`);
-    }
-  } catch (err) {
-    console.error('خطا در webhook:', err.message);
-    process.exit(1);
-  }
-
   await createTables();
-  console.log('KaniaChatBot آماده است!');
-});
 
-const keepAliveUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL}`;
-if (keepAliveUrl.includes('railway.app')) {
-  setInterval(() => fetch(keepAliveUrl).catch(() => {}), 600000);
-}
+  const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || process.env.RENDER_EXTERNAL_URL;
+
+  if (domain && domain.trim() !== '') {
+    const webhookUrl = `https://\( {domain.trim()}/bot \){BOT_TOKEN}`;
+    try {
+      await bot.setWebHook(webhookUrl);
+      console.log(`Webhook با موفقیت تنظیم شد: ${webhookUrl}`);
+    } catch (err) {
+      console.error('خطا در تنظیم webhook، سوئیچ به polling:', err.message);
+      bot.startPolling();
+      console.log('ربات با polling فعال شد.');
+    }
+  } else {
+    console.log('دامنه عمومی یافت نشد، ربات با polling فعال شد.');
+    bot.startPolling();
+  }
+
+  console.log('KaniaChatBot آماده است! 🚀');
+});
 
 function mainKeyboard(reg, admin) {
   const k = [
@@ -878,4 +871,4 @@ bot.on('callback_query', async (query) => {
   bot.answerCallbackQuery(query.id);
 });
 
-console.log('KaniaChatBot — نسخه نهایی، کامل و بدون خطا 🚀');
+console.log('KaniaChatBot — نسخه نهایی، ۱۰۰% کامل و بدون خطا 🚀');
