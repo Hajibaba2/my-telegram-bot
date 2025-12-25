@@ -28,6 +28,7 @@ const states = {};
 
 async function createTables() {
   try {
+    // جدول users - PRIMARY KEY از ابتدا تعریف شده
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
@@ -44,9 +45,8 @@ async function createTables() {
         registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(255);`).catch(() => {});
-    await pool.query(`ALTER TABLE users ADD PRIMARY KEY IF NOT EXISTS (telegram_id);`).catch(() => {});
 
+    // جدول vips
     await pool.query(`
       CREATE TABLE IF NOT EXISTS vips (
         id SERIAL PRIMARY KEY,
@@ -58,6 +58,7 @@ async function createTables() {
       );
     `);
 
+    // جدول settings
     await pool.query(`
       CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
@@ -71,6 +72,7 @@ async function createTables() {
     `);
     await pool.query(`INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;`);
 
+    // جدول بایگانی
     await pool.query(`
       CREATE TABLE IF NOT EXISTS broadcast_messages (
         id SERIAL PRIMARY KEY,
