@@ -95,7 +95,6 @@ async function createTables() {
   }
 }
 
-// توابع کمکی
 async function isVip(id) {
   const { rows } = await pool.query(
     'SELECT 1 FROM vips WHERE telegram_id = $1 AND approved AND end_date > NOW()',
@@ -154,13 +153,12 @@ function mainKeyboard(reg, admin) {
 }
 
 function adminKeyboard() {
-  const k = [
+  return createReplyKeyboard([
     [{ text: '🤖 هوش مصنوعی' }, { text: '📺 کانال‌ها' }],
     [{ text: '👥 کاربران' }, { text: '📨 پیامرسانی' }],
     [{ text: '📊 آمار' }, { text: '🔄 ریست دیتابیس' }],
     [{ text: '↩️ بازگشت به منو اصلی' }],
-  ];
-  return createReplyKeyboard(k);
+  ]);
 }
 
 function aiAdminKeyboard() {
@@ -224,10 +222,10 @@ function backKeyboard() {
 // /start
 bot.onText(/\/start/, async (msg) => {
   const id = msg.chat.id;
-  const user = msg.from.username ? `@${msg.from.username}` : null;
+  const username = msg.from.username ? `@${msg.from.username}` : null;
   await pool.query(
     `INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username`,
-    [id, user]
+    [id, username]
   );
   const registered = await isRegistered(id);
   const admin = id === ADMIN_CHAT_ID;
@@ -248,6 +246,7 @@ bot.on('message', async (msg) => {
     );
   }
 
+  // اگر state وجود داشته باشد، مستقیم به handleState برو
   if (states[id]) {
     await handleState(id, text, msg);
     return;
@@ -272,7 +271,7 @@ bot.on('message', async (msg) => {
   }
 
   if (text === '💬 ارسال پیام به کانیا') {
-    bot.sendMessage(id, '💬 پیام خود را بنویسید (متن، عکس، ویدیو، فایل).');
+    bot.sendMessage(id, '💬 پیام خود را بنویسید (متن یا رسانه).');
     states[id] = { type: 'chat_admin' };
   }
 
@@ -298,50 +297,58 @@ bot.on('message', async (msg) => {
   }
 
   // پنل ادمین
-  if (admin) {
-    if (text === '🛡️ پنل ادمین') {
-      bot.sendMessage(id, '🛡️ پنل ادمین', adminKeyboard());
-    }
+  if (admin && text === '🛡️ پنل ادمین') {
+    bot.sendMessage(id, '🛡️ پنل ادمین', adminKeyboard());
+  }
 
+  // ورود به زیرمنوهای ادمین
+  if (admin) {
     if (text === '🤖 هوش مصنوعی') {
       bot.sendMessage(id, '🤖 مدیریت هوش مصنوعی:', aiAdminKeyboard());
       states[id] = { type: 'admin_ai_menu' };
     }
-
     if (text === '📺 کانال‌ها') {
       bot.sendMessage(id, '⚙️ تنظیمات کانال‌ها:', channelsKeyboard());
       states[id] = { type: 'admin_channels_menu' };
     }
-
     if (text === '👥 کاربران') {
       bot.sendMessage(id, '👥 مدیریت کاربران:', usersKeyboard());
       states[id] = { type: 'admin_users_menu' };
     }
-
     if (text === '📨 پیامرسانی') {
       bot.sendMessage(id, '📨 پیامرسانی:', broadcastKeyboard());
       states[id] = { type: 'admin_broadcast_menu' };
     }
+  }
+});
 
-    // تنظیمات AI
+// مدیریت تمام stateها
+async function handleState(id, text, msg) {
+  const state = states[id];
+  const admin = id === ADMIN_CHAT_ID;
+
+  // زیرمنوهای ادمین
+  if (state.type === 'admin_ai_menu') {
     if (text === '⚙️ تنظیم توکن API') {
       bot.sendMessage(id, '🔑 توکن OpenAI را وارد کنید:');
       states[id] = { type: 'set_ai_token' };
-    }
-    if (text === '📂 ارسال فایل پرامپت') {
+    } else if (text === '📂 ارسال فایل پرامپت') {
       bot.sendMessage(id, '📂 فایل پرامپت (.txt) ارسال کنید:');
       states[id] = { type: 'upload_prompt' };
-    }
-    if (text === '👀 مشاهده پرامپت') {
+    } else if (text === '👀 مشاهده پرامپت') {
       const { rows } = await pool.query('SELECT prompt_content FROM settings');
       bot.sendMessage(id, `👀 پرامپت فعلی:\n\n${rows[0]?.prompt_content || 'تنظیم نشده'}`);
-    }
-    if (text === '🗑️ حذف پرامپت') {
+    } else if (text === '🗑️ حذف پرامپت') {
       await pool.query('UPDATE settings SET prompt_content = NULL');
       bot.sendMessage(id, '🗑️ پرامپت حذف شد.');
+    } else if (text === '↩️ بازگشت به پنل ادمین') {
+      delete states[id];
+      bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
     }
+    return;
+  }
 
-    // تنظیمات کانال
+  if (state.type === 'admin_channels_menu') {
     if (['لینک کانال رایگان', 'لینک کانال VIP', 'مبلغ عضویت', 'آدرس کیف پول', 'شبکه انتقال'].includes(text)) {
       const map = {
         'لینک کانال رایگان': 'free_channel',
@@ -352,17 +359,20 @@ bot.on('message', async (msg) => {
       };
       states[id] = { type: 'set_' + map[text] };
       bot.sendMessage(id, `مقدار جدید برای ${text} را وارد کنید:`);
+    } else if (text === '↩️ بازگشت به پنل ادمین') {
+      delete states[id];
+      bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
     }
+    return;
+  }
 
-    // کاربران
+  if (state.type === 'admin_users_menu') {
     if (text === '📊 آمار کاربران') {
       const total = await pool.query('SELECT COUNT(*) FROM users');
       const vip = await pool.query('SELECT COUNT(*) FROM vips WHERE approved AND end_date > NOW()');
       const normal = parseInt(total.rows[0].count) - parseInt(vip.rows[0].count);
       bot.sendMessage(id, `👥 آمار کاربران:\nعادی: ${normal}\nVIP: ${vip.rows[0].count}\nکل: ${total.rows[0].count}`);
-    }
-
-    if (text === '👤 لیست کاربران عادی') {
+    } else if (text === '👤 لیست کاربران عادی') {
       const { rows } = await pool.query(`
         SELECT u.telegram_id, u.username, u.name FROM users u
         LEFT JOIN vips v ON u.telegram_id = v.telegram_id AND v.approved AND v.end_date > NOW()
@@ -371,9 +381,7 @@ bot.on('message', async (msg) => {
       let list = rows.length ? '👤 کاربران عادی (۲۰ اخیر):\n\n' : 'هیچ کاربری یافت نشد.';
       rows.forEach(r => list += `ID: ${r.telegram_id}\nنام: ${r.name || 'ندارد'}\nیوزرنیم: ${r.username || 'ندارد'}\n\n`);
       bot.sendMessage(id, list);
-    }
-
-    if (text === '💎 لیست کاربران VIP') {
+    } else if (text === '💎 لیست کاربران VIP') {
       const { rows } = await pool.query(`
         SELECT u.telegram_id, u.username, u.name, v.end_date FROM users u
         JOIN vips v ON u.telegram_id = v.telegram_id
@@ -385,124 +393,123 @@ bot.on('message', async (msg) => {
         list += `ID: ${r.telegram_id}\nنام: ${r.name || 'ندارد'}\nیوزرنیم: ${r.username || 'ندارد'}\nپایان: ${end}\n\n`;
       });
       bot.sendMessage(id, list);
+    } else if (text === '↩️ بازگشت به پنل ادمین') {
+      delete states[id];
+      bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
     }
+    return;
+  }
 
-    if (text === '📊 آمار') {
-      const { rows } = await pool.query('SELECT COUNT(*) AS total, SUM(ai_questions_used) AS used FROM users');
-      bot.sendMessage(id, `📊 آمار کلی:\nکاربران: ${rows[0].total}\nسوالات AI: ${rows[0].used || 0}`);
-    }
-
-    if (text === '🔄 ریست دیتابیس') {
-      const tables = ['users', 'vips', 'settings', 'broadcast_messages'];
-      states[id] = { type: 'reset_db', tables, step: 0 };
-      bot.sendMessage(id, '⚠️ ریست دیتابیس — تمام داده‌ها حذف می‌شوند!\nجدول اول: users', createReplyKeyboard([
-        [{ text: '✅ تأیید پاکسازی' }],
-        [{ text: '❌ لغو' }]
-      ], { one_time: true }));
-    }
-
+  if (state.type === 'admin_broadcast_menu') {
     if (text.startsWith('📢') || text.startsWith('📩') || text.startsWith('💌')) {
       const target = text.includes('عادی') ? 'normal' : text.includes('VIP') ? 'vip' : 'all';
       states[id] = { type: 'broadcast', target };
       bot.sendMessage(id, '📤 پیام را ارسال کنید (/cancel برای لغو)');
-    }
-
-    if (text === '📂 بایگانی') {
+    } else if (text === '📂 بایگانی') {
       const { rows } = await pool.query('SELECT id, target_type, timestamp, sent_count, failed_count FROM broadcast_messages ORDER BY timestamp DESC LIMIT 20');
-      if (!rows.length) return bot.sendMessage(id, 'بایگانی خالی است.');
-      let msg = '📂 بایگانی پیام‌ها (۲۰ آخر):\n\n';
-      rows.forEach(r => {
-        const date = moment(r.timestamp).format('jYYYY/jM/jD HH:mm');
-        const target = r.target_type === 'all' ? 'همه' : r.target_type === 'vip' ? 'VIP' : 'عادی';
-        msg += `${r.id}. ${target} — ${date}\n✅ ${r.sent_count} ❌ ${r.failed_count}\n/view_${r.id}\n\n`;
-      });
-      bot.sendMessage(id, msg);
-    }
-
-    // بازگشت‌ها
-    if (text.includes('↩️ بازگشت به پنل ادمین') || text === '↩️ بازگشت') {
+      if (!rows.length) {
+        bot.sendMessage(id, 'بایگانی خالی است.');
+      } else {
+        let msgText = '📂 بایگانی پیام‌ها (۲۰ آخر):\n\n';
+        rows.forEach(r => {
+          const date = moment(r.timestamp).format('jYYYY/jM/jD HH:mm');
+          const target = r.target_type === 'all' ? 'همه' : r.target_type === 'vip' ? 'VIP' : 'عادی';
+          msgText += `${r.id}. ${target} — ${date}\n✅ ${r.sent_count} ❌ ${r.failed_count}\n/view_${r.id}\n\n`;
+        });
+        bot.sendMessage(id, msgText);
+      }
+    } else if (text === '↩️ بازگشت به پنل ادمین') {
       delete states[id];
       bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
     }
-    if (text === '↩️ بازگشت به منو اصلی') {
-      delete states[id];
-      bot.sendMessage(id, '↩️ بازگشت به منوی اصلی', mainKeyboard(true, true));
-    }
+    return;
   }
 
-  // VIP waiting
-  if (states[id]?.type === 'vip_waiting') {
-    if (text === '📸 ارسال عکس فیش واریزی') {
-      bot.sendMessage(id, '📸 عکس فیش واریزی را ارسال کنید.');
-      states[id] = { type: 'vip_receipt' };
-    }
-    if (text === '❌ انصراف از عضویت VIP') {
-      delete states[id];
-      bot.sendMessage(id, '❌ انصراف ثبت شد.', mainKeyboard(true, admin));
-      bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${id} از VIP انصراف داد.`);
-    }
-  }
-});
-
-// مدیریت stateها
-async function handleState(id, text, msg) {
-  const state = states[id];
-  const admin = id === ADMIN_CHAT_ID;
-  const registered = await isRegistered(id);
-
-  // ویرایش منو
+  // ویرایش اطلاعات
   if (state.type === 'edit_menu') {
-    const fields = {
-      '👤 نام': 'name', '🎂 سن': 'age', '🏙️ شهر': 'city', '🌍 منطقه': 'region',
-      '⚧️ جنسیت': 'gender', '💼 شغل': 'job', '🎯 هدف': 'goal', '📱 شماره تماس': 'phone'
+    const fieldMap = {
+      '👤 نام': 'name',
+      '🎂 سن': 'age',
+      '🏙️ شهر': 'city',
+      '🌍 منطقه': 'region',
+      '⚧️ جنسیت': 'gender',
+      '💼 شغل': 'job',
+      '🎯 هدف': 'goal',
+      '📱 شماره تماس': 'phone'
     };
     if (text === '↩️ بازگشت به منو اصلی') {
       delete states[id];
-      bot.sendMessage(id, '↩️ بازگشت', mainKeyboard(true, admin));
+      bot.sendMessage(id, '↩️ بازگشت به منوی اصلی', mainKeyboard(true, admin));
       return;
     }
-    if (fields[text]) {
-      states[id] = { type: 'edit_field', field: fields[text], label: text };
-      bot.sendMessage(id, `مقدار جدید ${text}:`);
+    if (fieldMap[text]) {
+      states[id] = { type: 'edit_field', field: fieldMap[text], label: text };
+      bot.sendMessage(id, `مقدار جدید برای ${text} را وارد کنید:`);
       return;
     }
   }
 
   if (state.type === 'edit_field') {
-    const value = state.field === 'age' ? parseInt(text) || null : text.trim() || null;
+    const value = state.field === 'age' ? (isNaN(parseInt(text)) ? null : parseInt(text)) : text.trim() || null;
     await pool.query(`UPDATE users SET ${state.field} = $1 WHERE telegram_id = $2`, [value, id]);
-    bot.sendMessage(id, `✅ ${state.label} بروز شد.`, editKeyboard());
+    bot.sendMessage(id, `✅ ${state.label} بروزرسانی شد!`, editKeyboard());
     states[id] = { type: 'edit_menu' };
     return;
   }
 
   // ثبت‌نام کامل
   if (state.type === 'register_full') {
-    const questions = ['👤 نام:', '🎂 سن:', '🏙️ شهر:', '🌍 منطقه:', '⚧️ جنسیت:', '💼 شغل:', '🎯 هدف:', '📱 شماره تماس:'];
+    const questions = [
+      '👤 نام خود را وارد کنید:',
+      '🎂 سن خود را وارد کنید (عدد):',
+      '🏙️ شهر خود را وارد کنید:',
+      '🌍 منطقه یا محله خود را وارد کنید:',
+      '⚧️ جنسیت خود را وارد کنید:',
+      '💼 شغل خود را وارد کنید:',
+      '🎯 هدف شما چیست؟',
+      '📱 شماره تماس خود را وارد کنید:'
+    ];
     const fields = ['name', 'age', 'city', 'region', 'gender', 'job', 'goal', 'phone'];
+    if (state.step == null) state.step = 0;
     state.data[fields[state.step]] = text.trim();
     state.step++;
     if (state.step >= questions.length) {
-      const age = parseInt(state.data.age) || null;
+      const ageVal = isNaN(parseInt(state.data.age)) ? null : parseInt(state.data.age);
       await pool.query(`
-        INSERT INTO users (telegram_id, name, age, city, region, gender, job, goal, phone)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        INSERT INTO users (telegram_id, username, name, age, city, region, gender, job, goal, phone)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         ON CONFLICT (telegram_id) DO UPDATE SET
         name=EXCLUDED.name, age=EXCLUDED.age, city=EXCLUDED.city, region=EXCLUDED.region,
         gender=EXCLUDED.gender, job=EXCLUDED.job, goal=EXCLUDED.goal, phone=EXCLUDED.phone
-      `, [id, state.data.name, age, state.data.city, state.data.region, state.data.gender, state.data.job, state.data.goal, state.data.phone]);
+      `, [id, state.data.username || null, state.data.name, ageVal, state.data.city,
+          state.data.region, state.data.gender, state.data.job, state.data.goal, state.data.phone]);
+      bot.sendMessage(id, '✅ ثبت‌نام با موفقیت انجام شد! 🎉', mainKeyboard(true, admin));
       delete states[id];
-      bot.sendMessage(id, '✅ ثبت‌نام کامل شد! 🎉', mainKeyboard(true, admin));
       return;
     }
     bot.sendMessage(id, questions[state.step]);
+    return;
   }
 
   // رسید VIP
+  if (state.type === 'vip_waiting') {
+    if (text === '📸 ارسال عکس فیش واریزی') {
+      bot.sendMessage(id, '📸 عکس فیش واریزی را ارسال کنید.');
+      states[id] = { type: 'vip_receipt' };
+      return;
+    }
+    if (text === '❌ انصراف از عضویت VIP') {
+      delete states[id];
+      bot.sendMessage(id, '❌ عضویت VIP لغو شد.', mainKeyboard(true, admin));
+      bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${id} از عضویت VIP انصراف داد.`);
+      return;
+    }
+  }
+
   if (state.type === 'vip_receipt' && msg.photo) {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
     await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
-    bot.sendMessage(ADMIN_CHAT_ID, `📸 رسید از ${id}\n/approve_${id} یا /reject_${id}`);
+    bot.sendMessage(ADMIN_CHAT_ID, `📸 رسید از کاربر ${id}\n/approve_${id} یا /reject_${id}`);
     await pool.query('INSERT INTO vips (telegram_id, payment_receipt) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, fileId]);
     delete states[id];
     bot.sendMessage(id, '✅ رسید ارسال شد. منتظر تأیید باشید.', mainKeyboard(true, admin));
@@ -511,8 +518,9 @@ async function handleState(id, text, msg) {
 
   // چت با ادمین
   if (state.type === 'chat_admin') {
+    const registered = await isRegistered(id);
     if (!registered && (msg.photo || msg.video || msg.document || msg.animation)) {
-      bot.sendMessage(id, '⚠️ برای ارسال رسانه ابتدا ثبت‌نام کنید.');
+      bot.sendMessage(id, '⚠️ برای ارسال رسانه، ابتدا ثبت‌نام کنید.');
       return;
     }
     try {
@@ -528,6 +536,7 @@ async function handleState(id, text, msg) {
       bot.sendMessage(id, '❌ خطا در ارسال. دوباره سعی کنید.', mainKeyboard(true, admin));
     }
     delete states[id];
+    return;
   }
 
   // چت AI
@@ -566,6 +575,7 @@ async function handleState(id, text, msg) {
       bot.sendMessage(id, '❌ خطا در AI. پیام به ادمین ارسال شد.', mainKeyboard(true, admin));
       delete states[id];
     }
+    return;
   }
 
   // پیام همگانی
@@ -595,6 +605,7 @@ async function handleState(id, text, msg) {
     `, [ADMIN_CHAT_ID, state.target, text, media_type, media_file_id, msg.caption, success, failed]);
     bot.sendMessage(id, `📊 نتیجه:\nموفق: ${success}\nناموفق: ${failed}`);
     delete states[id];
+    return;
   }
 
   // تنظیمات ادمین
@@ -604,16 +615,17 @@ async function handleState(id, text, msg) {
     bot.sendMessage(id, '✅ ذخیره شد.');
     if (field === 'ai_token') openai = new OpenAI({ apiKey: text });
     delete states[id];
-    bot.sendMessage(id, '↩️ بازگشت به پنل', adminKeyboard());
+    bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
+    return;
   }
 
-  // آپلود پرامپت
-  if (state.type === 'upload_prompt' && msg.document?.file_name.endsWith('.txt')) {
+  if (state.type === 'upload_prompt' && msg.document?.file_name?.endsWith('.txt')) {
     const content = await downloadFile(msg.document.file_id);
     await pool.query('UPDATE settings SET prompt_content = $1', [content]);
     bot.sendMessage(id, '✅ پرامپت ذخیره شد.');
     delete states[id];
-    bot.sendMessage(id, '↩️ بازگشت', adminKeyboard());
+    bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
+    return;
   }
 
   // ریست دیتابیس
@@ -626,14 +638,16 @@ async function handleState(id, text, msg) {
         bot.sendMessage(id, '🔄 دیتابیس ریست شد.');
         delete states[id];
       } else {
-        bot.sendMessage(id, `⚠️ پاکسازی ${state.tables[state.step]}؟`, createReplyKeyboard([
-          [{ text: '✅ تأیید پاکسازی' }], [{ text: '❌ لغو' }]
+        bot.sendMessage(id, `⚠️ پاکسازی جدول ${state.tables[state.step]}؟`, createReplyKeyboard([
+          [{ text: '✅ تأیید پاکسازی' }],
+          [{ text: '❌ لغو' }]
         ], { one_time: true }));
       }
     } else if (text === '❌ لغو') {
       delete states[id];
-      bot.sendMessage(id, '❌ لغو شد.');
+      bot.sendMessage(id, '❌ پاکسازی لغو شد.');
     }
+    return;
   }
 
   // پاسخ به کاربر
@@ -642,25 +656,26 @@ async function handleState(id, text, msg) {
       await bot.sendMessage(state.userId, text);
       bot.sendMessage(id, '✅ پاسخ ارسال شد.');
     } catch {
-      bot.sendMessage(id, '❌ خطا در ارسال.');
+      bot.sendMessage(id, '❌ خطا در ارسال پاسخ.');
     }
     delete states[id];
+    return;
   }
 
   if (text === '/cancel') {
     delete states[id];
-    bot.sendMessage(id, '❌ لغو شد.');
+    bot.sendMessage(id, '❌ عملیات لغو شد.');
   }
 }
 
-// تأیید/رد VIP
+// تأیید و رد VIP
 bot.onText(/\/approve_(\d+)/, async (msg, match) => {
   if (msg.chat.id !== ADMIN_CHAT_ID) return;
   const uid = parseInt(match[1]);
   const end = moment().add(1, 'month').toDate();
   await pool.query('UPDATE vips SET approved = TRUE, start_date = NOW(), end_date = $1 WHERE telegram_id = $2', [end, uid]);
   const { rows } = await pool.query('SELECT vip_channel FROM settings');
-  bot.sendMessage(uid, `🎉 VIP تأیید شد!\nتا ${moment(end).format('jYYYY/jM/jD')}\nکانال: ${rows[0]?.vip_channel || 'تنظیم نشده'}`);
+  bot.sendMessage(uid, `🎉 عضویت VIP تأیید شد!\nتا ${moment(end).format('jYYYY/jM/jD')} معتبر است.\nکانال VIP: ${rows[0]?.vip_channel || 'تنظیم نشده'}`);
   bot.sendMessage(ADMIN_CHAT_ID, `✅ کاربر ${uid} VIP شد.`);
 });
 
@@ -668,19 +683,19 @@ bot.onText(/\/reject_(\d+)/, async (msg, match) => {
   if (msg.chat.id !== ADMIN_CHAT_ID) return;
   const uid = parseInt(match[1]);
   await pool.query('UPDATE vips SET approved = FALSE WHERE telegram_id = $1', [uid]);
-  bot.sendMessage(uid, '❌ رسید تأیید نشد.');
-  bot.sendMessage(ADMIN_CHAT_ID, `❌ رسید ${uid} رد شد.`);
+  bot.sendMessage(uid, '❌ رسید تأیید نشد. دوباره تلاش کنید.');
+  bot.sendMessage(ADMIN_CHAT_ID, `❌ رسید کاربر ${uid} رد شد.`);
 });
 
 bot.onText(/\/view_(\d+)/, async (msg, match) => {
   if (msg.chat.id !== ADMIN_CHAT_ID) return;
   const row = (await pool.query('SELECT * FROM broadcast_messages WHERE id = $1', [match[1]])).rows[0];
-  if (!row) return bot.sendMessage(msg.chat.id, 'یافت نشد.');
+  if (!row) return bot.sendMessage(msg.chat.id, 'پیام یافت نشد.');
   const caption = `📋 شناسه: ${row.id}\nهدف: ${row.target_type}\nتاریخ: ${moment(row.timestamp).format('jYYYY/jM/jD HH:mm')}\nموفق: ${row.sent_count} | ناموفق: ${row.failed_count}`;
   if (row.media_type === 'photo') await bot.sendPhoto(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text });
   else if (row.media_type === 'video') await bot.sendVideo(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text });
   else if (row.media_type === 'document') await bot.sendDocument(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text });
-  else await bot.sendMessage(msg.chat.id, row.message_text);
+  else await bot.sendMessage(msg.chat.id, row.message_text || '(بدون متن)');
   bot.sendMessage(msg.chat.id, caption);
 });
 
@@ -690,12 +705,12 @@ bot.on('callback_query', async (query) => {
   if (query.data.startsWith('reply_')) {
     const userId = parseInt(query.data.split('_')[1]);
     states[ADMIN_CHAT_ID] = { type: 'reply_to_user', userId };
-    bot.sendMessage(ADMIN_CHAT_ID, `📝 پاسخ به کاربر ${userId}:`);
+    bot.sendMessage(ADMIN_CHAT_ID, `📝 پاسخ به کاربر ${userId} را بنویسید:`);
     bot.answerCallbackQuery(query.id);
   }
 });
 
-// Keep Alive
+// Keep Alive برای Railway
 const appUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || 'fallback.up.railway.app'}`;
 setInterval(() => fetch(appUrl).catch(() => {}), 300000);
 
