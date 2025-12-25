@@ -23,14 +23,14 @@ if (!BOT_TOKEN || isNaN(ADMIN_CHAT_ID)) {
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  max: 10,                  // حداکثر اتصال همزمان
-  idleTimeoutMillis: 30000, // بستن اتصال بیکار پس از ۳۰ ثانیه
+  max: 10,
+  idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
 });
 
 const bot = new TelegramBot(BOT_TOKEN);
 let openai = null;
-const states = {}; // مدیریت حالت کاربران
+const states = {};
 
 // تابع ساخت کیبورد reply بهینه
 function createReplyKeyboard(keyboardArray, options = {}) {
@@ -44,7 +44,7 @@ function createReplyKeyboard(keyboardArray, options = {}) {
   };
 }
 
-// ساخت جدول‌های دیتابیس
+// ساخت جدول‌ها + اضافه کردن فیلدهای جدید اگر وجود نداشته باشند
 async function createTables() {
   try {
     await pool.query(`
@@ -77,7 +77,6 @@ async function createTables() {
       CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
         ai_token TEXT,
-        prompt_content TEXT,
         free_channel TEXT,
         vip_channel TEXT,
         membership_fee VARCHAR(100),
@@ -86,6 +85,20 @@ async function createTables() {
       );
     `);
     await pool.query(`INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;`);
+
+    // اضافه کردن فیلد prompt_content اگر وجود نداشته باشد
+    try {
+      await pool.query('SELECT prompt_content FROM settings LIMIT 1');
+    } catch (err) {
+      if (err.message.includes('column "prompt_content" does not exist')) {
+        console.log('فیلد prompt_content وجود ندارد. در حال اضافه کردن...');
+        await pool.query('ALTER TABLE settings ADD COLUMN prompt_content TEXT');
+        console.log('فیلد prompt_content با موفقیت اضافه شد.');
+      } else {
+        throw err;
+      }
+    }
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS broadcast_messages (
         id SERIAL PRIMARY KEY,
@@ -100,9 +113,9 @@ async function createTables() {
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log('تمام جدول‌ها آماده شدند.');
+    console.log('تمام جدول‌ها آماده شدند و فیلدهای لازم اضافه شدند.');
   } catch (err) {
-    console.error('خطا در ساخت جدول‌ها:', err.message);
+    console.error('خطا در ساخت یا بروزرسانی جدول‌ها:', err.message);
   }
 }
 
@@ -312,13 +325,11 @@ bot.on('message', async (msg) => {
     );
   }
 
-  // اگر state وجود داشته باشد، به handleState برو
   if (states[id]) {
     await handleState(id, text, msg);
     return;
   }
 
-  // منوی کاربر
   if (text === '📺 کانال رایگان') {
     const { rows } = await pool.query('SELECT free_channel FROM settings');
     bot.sendMessage(id, `📢 کانال رایگان:\n${rows[0]?.free_channel || 'تنظیم نشده ⚠️'}`);
@@ -362,13 +373,10 @@ bot.on('message', async (msg) => {
     }
   }
 
-  // پنل ادمین - ورود به منو
   if (admin) {
     if (text === '🛡️ پنل ادمین') {
       bot.sendMessage(id, '🛡️ پنل ادمین فعال شد', adminKeyboard());
     }
-
-    // ورود به زیرمنوها (state ست می‌شود)
     if (text === '🤖 هوش مصنوعی') {
       bot.sendMessage(id, '🤖 مدیریت هوش مصنوعی:', aiAdminKeyboard());
       states[id] = { type: 'admin_ai_menu' };
@@ -402,12 +410,20 @@ async function handleState(id, text, msg) {
       bot.sendMessage(id, '📂 فایل پرامپت (.txt) را ارسال کنید:');
       states[id] = { type: 'upload_prompt' };
     } else if (text === '👀 مشاهده پرامپت') {
-      const { rows } = await pool.query('SELECT prompt_content FROM settings');
-      const prompt = rows[0]?.prompt_content || 'پرامپت تنظیم نشده است.';
-      bot.sendMessage(id, `👀 پرامپت فعلی:\n\n${prompt}`);
+      try {
+        const { rows } = await pool.query('SELECT prompt_content FROM settings');
+        const prompt = rows[0]?.prompt_content || 'پرامپت تنظیم نشده است.';
+        bot.sendMessage(id, `👀 پرامپت فعلی:\n\n${prompt}`);
+      } catch (err) {
+        bot.sendMessage(id, '⚠️ خطا در خواندن پرامپت (فیلد وجود ندارد).');
+      }
     } else if (text === '🗑️ حذف پرامپت') {
-      await pool.query('UPDATE settings SET prompt_content = NULL');
-      bot.sendMessage(id, '🗑️ پرامپت حذف شد.');
+      try {
+        await pool.query('UPDATE settings SET prompt_content = NULL');
+        bot.sendMessage(id, '🗑️ پرامپت حذف شد.');
+      } catch (err) {
+        bot.sendMessage(id, '⚠️ خطا در حذف پرامپت (فیلد وجود ندارد).');
+      }
     } else if (text === '↩️ بازگشت به پنل ادمین') {
       delete states[id];
       bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
@@ -710,11 +726,22 @@ async function handleState(id, text, msg) {
   // آپلود پرامپت
   if (state.type === 'upload_prompt' && msg.document && msg.document.file_name.endsWith('.txt')) {
     const content = await downloadFile(msg.document.file_id);
-    if (content) {
-      await pool.query('UPDATE settings SET prompt_content = $1 WHERE id = 1', [content]);
-      bot.sendMessage(id, '✅ پرامپت جدید ذخیره شد.');
+    if (content !== null) {
+      try {
+        await pool.query('UPDATE settings SET prompt_content = $1 WHERE id = 1', [content]);
+        bot.sendMessage(id, '✅ پرامپت جدید ذخیره شد.');
+      } catch (err) {
+        if (err.message.includes('column "prompt_content" does not exist')) {
+          bot.sendMessage(id, '⚠️ فیلد پرامپت وجود ندارد. ربات در حال تعمیر خودکار است...');
+          await createTables(); // دوباره اضافه کردن فیلد
+          await pool.query('UPDATE settings SET prompt_content = $1 WHERE id = 1', [content]);
+          bot.sendMessage(id, '✅ پرامپت با موفقیت ذخیره شد (پس از تعمیر خودکار).');
+        } else {
+          bot.sendMessage(id, '❌ خطا در ذخیره پرامپت.');
+        }
+      }
     } else {
-      bot.sendMessage(id, '❌ خطا در خواندن فایل پرامپت.');
+      bot.sendMessage(id, '❌ خطا در خواندن فایل.');
     }
     delete states[id];
     bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
@@ -724,22 +751,23 @@ async function handleState(id, text, msg) {
   // ریست دیتابیس
   if (state.type === 'reset_db') {
     if (text === '✅ تأیید پاکسازی') {
-      await pool.query(`DROP TABLE IF EXISTS ${state.tables[state.step]} CASCADE`);
-      bot.sendMessage(id, `✅ جدول ${state.tables[state.step]} پاک شد.`);
+      const table = state.tables[state.step];
+      await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE`);
+      bot.sendMessage(id, `✅ جدول ${table} پاکسازی شد.`);
       state.step++;
       if (state.step >= state.tables.length) {
         await createTables();
-        bot.sendMessage(id, '🔄 تمام دیتابیس ریست شد.');
+        bot.sendMessage(id, '🔄 تمام جدول‌ها ریست شدند.');
         delete states[id];
       } else {
-        bot.sendMessage(id, `⚠️ پاکسازی جدول ${state.tables[state.step]}؟`, createReplyKeyboard([
+        bot.sendMessage(id, `⚠️ پاکسازی جدول ${state.tables[state.step]}؟ تمام داده‌ها حذف می‌شود!`, createReplyKeyboard([
           [{ text: '✅ تأیید پاکسازی' }],
           [{ text: '❌ لغو' }]
         ], { one_time: true }));
       }
     } else if (text === '❌ لغو') {
       delete states[id];
-      bot.sendMessage(id, '❌ عملیات ریست لغو شد.');
+      bot.sendMessage(id, '❌ پاکسازی لغو شد.');
     }
     return;
   }
@@ -748,9 +776,9 @@ async function handleState(id, text, msg) {
   if (state.type === 'reply_to_user') {
     try {
       await bot.sendMessage(state.userId, text);
-      bot.sendMessage(id, '✅ پاسخ با موفقیت ارسال شد.');
+      bot.sendMessage(id, '✅ پاسخ ارسال شد.');
     } catch (err) {
-      bot.sendMessage(id, '❌ خطا در ارسال پاسخ (کاربر ممکن است ربات را بلاک کرده باشد).');
+      bot.sendMessage(id, '❌ خطا در ارسال پاسخ (ممکن است کاربر ربات را بلاک کرده باشد).');
     }
     delete states[id];
     return;
@@ -815,4 +843,4 @@ bot.on('callback_query', async (query) => {
   }
 });
 
-console.log('KaniaChatBot — نسخه نهایی، کامل، بهینه و بدون خطا آماده است! 🚀');
+console.log('KaniaChatBot — نسخه نهایی، کامل، بدون خطا و آماده اجرا! 🚀');
