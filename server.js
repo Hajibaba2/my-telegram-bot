@@ -559,11 +559,13 @@ bot.onText(/\/reject_(\d+)/, async (msg, match) => {
 });
 
 // مشاهده بایگانی
+// مشاهده بایگانی - اصلاح متغیر id
 bot.onText(/\/view_(\d+)/, async (msg, match) => {
   if (msg.chat.id !== ADMIN_CHAT_ID) return;
+  const chatId = msg.chat.id;  // <-- اینجا تعریف کن
   const pid = match[1];
   const { rows } = await pool.query('SELECT * FROM broadcast_messages WHERE id = $1', [pid]);
-  if (rows.length === 0) return bot.sendMessage(id, 'پیام یافت نشد.');
+  if (rows.length === 0) return bot.sendMessage(chatId, 'پیام یافت نشد.');
 
   const row = rows[0];
   const date = moment(row.timestamp).format('jYYYY/jM/jD - HH:mm');
@@ -571,13 +573,13 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
   const caption = `📋 جزئیات\nشناسه: ${row.id}\nهدف: ${target}\nتاریخ: ${date}\nموفق: ${row.sent_count}\nناموفق: ${row.failed_count}`;
 
   try {
-    if (row.media_type === 'photo') await bot.sendPhoto(id, row.media_file_id, { caption: row.caption || row.message_text });
-    else if (row.media_type === 'video') await bot.sendVideo(id, row.media_file_id, { caption: row.caption || row.message_text });
-    else if (row.media_type === 'document') await bot.sendDocument(id, row.media_file_id, { caption: row.caption || row.message_text });
-    else await bot.sendMessage(id, row.message_text || '(بدون متن)');
-    bot.sendMessage(id, caption);
+    if (row.media_type === 'photo') await bot.sendPhoto(chatId, row.media_file_id, { caption: row.caption || row.message_text });
+    else if (row.media_type === 'video') await bot.sendVideo(chatId, row.media_file_id, { caption: row.caption || row.message_text });
+    else if (row.media_type === 'document') await bot.sendDocument(chatId, row.media_file_id, { caption: row.caption || row.message_text });
+    else await bot.sendMessage(chatId, row.message_text || '(بدون متن)');
+    bot.sendMessage(chatId, caption);
   } catch (e) {
-    bot.sendMessage(id, 'خطا در نمایش رسانه.');
+    bot.sendMessage(chatId, 'خطا در نمایش رسانه.');
   }
 });
 
