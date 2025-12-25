@@ -1,23 +1,18 @@
-// server.js - کد نهایی کامل، مستقل و بهینه (بدون نیاز به کد قبلی)
-// تمام قابلیت‌ها: ثبت‌نام، ویرایش با منو، VIP با دکمه inline، پنل ادمین کامل، بایگانی، پیام همگانی
-// رفع تمام خطاها (SQL، Markdown، await، NaN)
+// server.js - کد نهایی کامل، مستقل، بدون خطا و حرفه‌ای
+// تمام قابلیت‌ها: ثبت‌نام، ویرایش با منو، VIP با دکمه inline، پنل ادمین، بایگانی، پیام همگانی
+// رفع تمام خطاها (SQL، Syntax، Markdown، callback، sleep در Railway)
 
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const moment = require('moment-jalaali');
 const express = require('express');
 const { OpenAI } = require('openai');
+const fetch = require('node-fetch'); // برای Keep Alive (اگر node-fetch نصب نیست، npm i node-fetch اضافه کن)
 
 const app = express();
 app.use(express.json());
 
-// هندلر callback_query برای دکمه‌های VIP - حتماً async باشد
-bot.on('callback_query', async (callback) => {
-  const chatId = callback.message.chat.id;
-  const data = callback.data;
-
-
-// متغیرهای محیطی
+// تنظیمات محیطی
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID);
 const PORT = process.env.PORT || 3000;
@@ -31,7 +26,7 @@ const pool = new Pool({
 const bot = new TelegramBot(BOT_TOKEN);
 let openai = null;
 
-const states = {}; // حالت‌های موقت کاربران
+const states = {};
 
 // ساخت جدول‌ها
 async function createTables() {
@@ -114,13 +109,13 @@ app.post(`/bot${BOT_TOKEN}`, (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  const url = `https://${process.env.RAILWAY_STATIC_URL || 'your-app.up.railway.app'}/bot${BOT_TOKEN}`;
+  const url = `https://${process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}/bot${BOT_TOKEN}`;
   await bot.setWebHook(url);
   console.log(`Webhook: ${url}`);
   await createTables();
 });
 
-// کیبوردهای اصلی
+// کیبورد اصلی
 function mainKeyboard(reg, admin) {
   const k = [
     [{ text: '📺 کانال رایگان' }, { text: '💎 عضویت VIP' }],
@@ -131,6 +126,7 @@ function mainKeyboard(reg, admin) {
   return { reply_markup: { keyboard: k, resize_keyboard: true } };
 }
 
+// کیبورد ادمین
 function adminKeyboard() {
   return {
     reply_markup: {
@@ -145,6 +141,7 @@ function adminKeyboard() {
   };
 }
 
+// کیبورد ویرایش
 function editKeyboard() {
   return {
     reply_markup: {
@@ -177,7 +174,7 @@ bot.onText(/\/start/, async (msg) => {
   bot.sendMessage(id, '🌟 به ربات KaniaChatBot خوش آمدید! 🌟\n\nلطفاً از منوی زیر استفاده کنید 👇', mainKeyboard(reg, admin));
 });
 
-// هندلر پیام‌ها
+// هندلر اصلی پیام‌ها
 bot.on('message', async (msg) => {
   const id = msg.chat.id;
   const text = msg.text || '';
@@ -213,16 +210,12 @@ bot.on('message', async (msg) => {
 
       bot.sendMessage(id, msgText, {
         reply_markup: {
-  inline_keyboard: [
-    [{ text: '📸 ارسال عکس فیش', callback_data: 'vip_receipt' }],
-    [{ text: '❌ انصراف', callback_data: 'vip_cancel' }]
-  ]
-}
-       
+          inline_keyboard: [
+            [{ text: '📸 ارسال عکس فیش', callback_data: 'vip_receipt' }],
+            [{ text: '❌ انصراف', callback_data: 'vip_cancel' }]
+          ]
         }
       });
-
-  
       states[id] = { type: 'vip_waiting' };
     } else {
       bot.sendMessage(id, '⚠️ اطلاعات VIP تنظیم نشده است.');
@@ -339,13 +332,31 @@ bot.on('message', async (msg) => {
   }
 });
 
+// callback inline VIP - حتماً answerCallbackQuery اول فراخوانی شود
+bot.on('callback_query', async (cb) => {
+  const id = cb.message.chat.id;
+
+  try {
+    await bot.answerCallbackQuery(cb.id); // مهم: لودینگ دکمه تمام شود
+
+    if (cb.data === 'vip_receipt') {
+      bot.sendMessage(id, '📸 لطفاً عکس فیش واریزی را ارسال کنید.');
+      states[id] = { type: 'vip_receipt' };
+    } else if (cb.data === 'vip_cancel') {
+      bot.sendMessage(id, '❌ عضویت VIP لغو شد.', mainKeyboard(true, id === ADMIN_CHAT_ID));
+      bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${id} از عضویت VIP انصراف داد.`);
+      delete states[id];
+    }
+  } catch (err) {
+    console.error('خطا در callback_query:', err.message);
+  }
+});
 
 // مدیریت حالت‌ها
 async function handleState(id, text, msg) {
   const state = states[id];
   const admin = id === ADMIN_CHAT_ID;
 
-  // منوی ویرایش
   if (state.type === 'edit_menu') {
     const fieldMap = {
       '👤 نام': 'name',
@@ -372,7 +383,6 @@ async function handleState(id, text, msg) {
     return;
   }
 
-  // ویرایش تک فیلد
   if (state.type === 'edit_field') {
     const field = state.field;
     const value = field === 'age' ? (isNaN(parseInt(text)) ? null : parseInt(text)) : text.trim() || null;
@@ -385,7 +395,6 @@ async function handleState(id, text, msg) {
     return;
   }
 
-  // ثبت‌نام کامل
   if (state.type === 'register_full') {
     const questions = [
       '👤 نام خود را وارد کنید:',
@@ -425,7 +434,6 @@ async function handleState(id, text, msg) {
     return;
   }
 
-  // رسید VIP
   if (state.type === 'vip_receipt' && msg.photo) {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
     await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
@@ -436,7 +444,6 @@ async function handleState(id, text, msg) {
     return;
   }
 
-  // چت با ادمین
   if (state.type === 'chat_admin') {
     await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
     bot.sendMessage(id, '✅ پیام ارسال شد.');
@@ -444,7 +451,6 @@ async function handleState(id, text, msg) {
     return;
   }
 
-  // چت AI
   if (state.type === 'ai_chat') {
     const vip = await isVip(id);
     const u = await pool.query('SELECT ai_questions_used FROM users WHERE telegram_id = $1', [id]);
@@ -472,7 +478,6 @@ async function handleState(id, text, msg) {
     return;
   }
 
-  // پیام همگانی
   if (state.type === 'broadcast' && !text.startsWith('/')) {
     let query = 'SELECT telegram_id FROM users';
     if (state.target === 'normal') {
@@ -512,7 +517,6 @@ async function handleState(id, text, msg) {
     return;
   }
 
-  // تنظیمات ادمین
   if (admin && state.type?.startsWith('set_')) {
     let field;
     if (state.type === 'set_ai_token') field = 'ai_token';
@@ -577,34 +581,10 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
   }
 });
 
-try {
-    // همیشه answerCallbackQuery را فراخوانی کن تا دکمه "لودینگ" تمام شود
-    await bot.answerCallbackQuery(callback.id);
-
-    if (data === 'vip_receipt') {
-      bot.sendMessage(chatId, '📸 لطفاً عکس فیش واریزی را ارسال کنید.');
-      states[chatId] = { type: 'vip_receipt' };
-    } else if (data === 'vip_cancel') {
-      bot.sendMessage(chatId, '❌ عضویت VIP لغو شد.\nبه منوی اصلی بازگشتید.', mainKeyboard(true, chatId === ADMIN_CHAT_ID));
-      bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${chatId} از عضویت VIP انصراف داد.`);
-      delete states[chatId];
-    }
-  } catch (error) {
-    console.error('خطا در callback_query:', error.message);
-    await bot.answerCallbackQuery(callback.id, { text: 'خطایی رخ داد!', show_alert: true });
-  }
-});
-
-
-
-
-// ... بقیه کد
-console.log('KaniaChatBot آماده!');
-
-// Keep Alive برای Railway
+// Keep Alive برای Railway (جلوگیری از sleep)
 const appUrl = `https://${process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}`;
 setInterval(() => {
   fetch(appUrl).catch(() => {});
-}, 300000); // هر ۵ دقیقه پینگ به خود اپ
+}, 300000); // هر ۵ دقیقه
 
-console.log('Keep Alive فعال شد.');
+console.log('KaniaChatBot آماده!');
