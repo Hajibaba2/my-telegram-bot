@@ -199,28 +199,33 @@ bot.on('message', async (msg) => {
   }
 
   if (text === '💎 عضویت VIP') {
-    const { rows } = await pool.query('SELECT membership_fee, wallet_address, network FROM settings');
-    const s = rows[0];
-    if (s?.membership_fee && s?.wallet_address && s?.network) {
-      const msgText = `💎 عضویت VIP 💎\n\n` +
-        `📌 مبلغ: ${s.membership_fee}\n\n` +
-        `💳 آدرس کیف پول (کپی کنید):\n${s.wallet_address}\n\n` +
-        `🌐 شبکه: ${s.network}\n\n` +
-        `✅ پس از واریز، عکس فیش را ارسال کنید.`;
+  const { rows } = await pool.query('SELECT membership_fee, wallet_address, network FROM settings');
+  const s = rows[0];
+  if (s?.membership_fee && s?.wallet_address && s?.network) {
+    const msgText = `💎 عضویت VIP 💎\n\n` +
+      `📌 مبلغ: ${s.membership_fee}\n\n` +
+      `💳 آدرس کیف پول (کپی کنید):\n${s.wallet_address}\n\n` +
+      `🌐 شبکه: ${s.network}\n\n` +
+      `✅ پس از واریز، عکس فیش را ارسال کنید.`;
 
-      bot.sendMessage(id, msgText, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📸 ارسال عکس فیش', callback_data: 'vip_receipt' }],
-            [{ text: '❌ انصراف', callback_data: 'vip_cancel' }]
-          ]
-        }
-      });
-      states[id] = { type: 'vip_waiting' };
-    } else {
-      bot.sendMessage(id, '⚠️ اطلاعات VIP تنظیم نشده است.');
-    }
+    // کیبورد موقت با دو دکمه
+    const vipKeyboard = {
+      reply_markup: {
+        keyboard: [
+          [{ text: '📸 ارسال عکس فیش واریزی' }],
+          [{ text: '❌ انصراف از عضویت VIP' }]
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: true  // بعد از انتخاب مخفی شود
+      }
+    };
+
+    bot.sendMessage(id, msgText, vipKeyboard);
+    states[id] = { type: 'vip_waiting' }; // حالت انتظار برای انتخاب
+  } else {
+    bot.sendMessage(id, '⚠️ اطلاعات VIP توسط ادمین تنظیم نشده است.');
   }
+}
 
   if (text === '💬 چت با ادمین') {
     bot.sendMessage(id, '💬 پیام خود را بنویسید.');
@@ -333,20 +338,21 @@ bot.on('message', async (msg) => {
 });
 
 // callback inline VIP - حتماً answerCallbackQuery اول فراخوانی شود
-bot.on('callback_query', async (cb) => {
-  const id = cb.message.chat.id;
+// بعد از بخش‌های دیگر، این را اضافه کن
+if (states[id]?.type === 'vip_waiting') {
+  if (text === '📸 ارسال عکس فیش واریزی') {
+    bot.sendMessage(id, '📸 لطفاً عکس فیش واریزی را ارسال کنید.');
+    states[id] = { type: 'vip_receipt' };
+    return;
+  }
 
-  try {
-    await bot.answerCallbackQuery(cb.id); // مهم: لودینگ دکمه تمام شود
-
-    if (cb.data === 'vip_receipt') {
-      bot.sendMessage(id, '📸 لطفاً عکس فیش واریزی را ارسال کنید.');
-      states[id] = { type: 'vip_receipt' };
-    } else if (cb.data === 'vip_cancel') {
-      bot.sendMessage(id, '❌ عضویت VIP لغو شد.', mainKeyboard(true, id === ADMIN_CHAT_ID));
-      bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${id} از عضویت VIP انصراف داد.`);
-      delete states[id];
-    }
+  if (text === '❌ انصراف از عضویت VIP') {
+    bot.sendMessage(id, '❌ عضویت VIP لغو شد.', mainKeyboard(true, admin));
+    bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${id} از عضویت VIP انصراف داد.`);
+    delete states[id];
+    return;
+  }
+}
   } catch (err) {
     console.error('خطا در callback_query:', err.message);
   }
