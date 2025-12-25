@@ -583,3 +583,15 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
 });
 
 console.log('KaniaChatBot آماده!');
+
+// ... بقیه کد
+
+console.log('KaniaChatBot آماده!');
+
+// Keep Alive برای Railway
+const appUrl = `https://${process.env.RAILWAY_STATIC_URL || 'my-telegram-bot-production-5f5e.up.railway.app'}`;
+setInterval(() => {
+  fetch(appUrl).catch(() => {});
+}, 300000); // هر ۵ دقیقه پینگ به خود اپ
+
+console.log('Keep Alive فعال شد.');
