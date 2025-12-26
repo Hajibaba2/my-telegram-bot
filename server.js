@@ -90,10 +90,11 @@ async function downloadFile(fileId) {
   }
 }
 
-// -------------------- ساختار دیتابیس --------------------
 async function createTables() {
+  console.log('🗄️ شروع ایجاد/بررسی جدول‌ها...');
+  
   try {
-    // جدول کاربران
+    // 1. ابتدا جدول users با حداقل فیلدها
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
@@ -107,21 +108,39 @@ async function createTables() {
         goal TEXT,
         phone VARCHAR(50),
         ai_questions_used INTEGER DEFAULT 0,
-        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        total_score INTEGER DEFAULT 0,
-        current_level INTEGER DEFAULT 0,
-        daily_streak INTEGER DEFAULT 0,
-        last_activity_date DATE,
-        weekly_ai_questions INTEGER DEFAULT 0,
-        weekly_ai_limit INTEGER DEFAULT 5,
-        can_send_media BOOLEAN DEFAULT FALSE,
-        extra_ai_questions INTEGER DEFAULT 0,
-        vip_days_from_points INTEGER DEFAULT 0
+        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-
+    console.log('✅ جدول users ایجاد/بررسی شد');
     
-    // جدول VIP
+    // 2. اضافه کردن فیلدهای جدید به users (اگر وجود ندارند)
+    const userColumns = [
+      'total_score INTEGER DEFAULT 0',
+      'current_level INTEGER DEFAULT 0',
+      'daily_streak INTEGER DEFAULT 0',
+      'last_activity_date DATE',
+      'weekly_ai_questions INTEGER DEFAULT 0',
+      'weekly_ai_limit INTEGER DEFAULT 5',
+      'can_send_media BOOLEAN DEFAULT FALSE',
+      'extra_ai_questions INTEGER DEFAULT 0',
+      'vip_days_from_points INTEGER DEFAULT 0',
+      'score INTEGER DEFAULT 0',
+      'level INTEGER DEFAULT 1'
+    ];
+    
+    for (const column of userColumns) {
+      const [colName] = column.split(' ');
+      try {
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${column}`);
+        console.log(`   ✓ ${colName}`);
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('duplicate column')) {
+          console.log(`   ⚠️ ${colName}: ${err.message.substring(0, 50)}`);
+        }
+      }
+    }
+    
+    // 3. جدول vips
     await pool.query(`
       CREATE TABLE IF NOT EXISTS vips (
         id SERIAL PRIMARY KEY,
@@ -132,8 +151,9 @@ async function createTables() {
         approved BOOLEAN DEFAULT FALSE
       );
     `);
-
-    // جدول تنظیمات
+    console.log('✅ جدول vips ایجاد/بررسی شد');
+    
+    // 4. جدول settings
     await pool.query(`
       CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
@@ -148,9 +168,11 @@ async function createTables() {
         prompt_content TEXT
       );
     `);
+    
     await pool.query(`INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;`);
-
-    // جدول سطح‌ها
+    console.log('✅ جدول settings ایجاد/بررسی شد');
+    
+    // 5. جدول levels
     await pool.query(`
       CREATE TABLE IF NOT EXISTS levels (
         level_number INTEGER PRIMARY KEY,
@@ -161,23 +183,29 @@ async function createTables() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-
-    // داده‌های اولیه سطح‌ها
-    await pool.query(`
-      INSERT INTO levels (level_number, name, emoji, min_score, benefits) VALUES
-      (1, 'Beginner', '🥉', 500, ARRAY['+1 سوال AI در هفته']),
-      (2, 'Explorer', '🥈', 1000, ARRAY['+2 سوال AI در هفته']),
-      (3, 'Regular', '🥇', 2500, ARRAY['+5 سوال AI در هفته']),
-      (4, 'Advanced', '🏅', 4000, ARRAY['+10 سوال AI در هفته', 'آخرین پست کانال VIP']),
-      (5, 'Veteran', '🏆', 6000, ARRAY['آخرین پست کانال VIP', '1 هفته عضویت VIP']),
-      (6, 'Master', '💎', 9000, ARRAY['1 هفته عضویت VIP', 'ارسال مدیا در چت ادمین']),
-      (7, 'Champion', '👑', 10000, ARRAY['1 ماه عضویت VIP رایگان'])
-      ON CONFLICT (level_number) DO NOTHING;
-    `);
-
-    // جدول جوایز دریافت شده
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS level_rewards_claimed (
+    console.log('✅ جدول levels ایجاد/بررسی شد');
+    
+    // 6. درج داده‌های اولیه levels
+    try {
+      await pool.query(`
+        INSERT INTO levels (level_number, name, emoji, min_score, benefits) VALUES
+        (1, 'Beginner', '🥉', 500, ARRAY['+1 سوال AI در هفته']),
+        (2, 'Explorer', '🥈', 1000, ARRAY['+2 سوال AI در هفته']),
+        (3, 'Regular', '🥇', 2500, ARRAY['+5 سوال AI در هفته']),
+        (4, 'Advanced', '🏅', 4000, ARRAY['+10 سوال AI در هفته', 'آخرین پست کانال VIP']),
+        (5, 'Veteran', '🏆', 6000, ARRAY['آخرین پست کانال VIP', '1 هفته عضویت VIP']),
+        (6, 'Master', '💎', 9000, ARRAY['1 هفته عضویت VIP', 'ارسال مدیا در چت ادمین']),
+        (7, 'Champion', '👑', 10000, ARRAY['1 ماه عضویت VIP رایگان'])
+        ON CONFLICT (level_number) DO NOTHING
+      `);
+      console.log('✅ داده‌های levels اضافه شدند');
+    } catch (err) {
+      console.log('⚠️ داده‌های levels از قبل وجود دارند');
+    }
+    
+    // 7. بقیه جداول
+    const otherTables = [
+      `CREATE TABLE IF NOT EXISTS level_rewards_claimed (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         level_number INTEGER NOT NULL,
@@ -185,12 +213,9 @@ async function createTables() {
         reward_value TEXT,
         claimed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(telegram_id, level_number, reward_type)
-      );
-    `);
-
-    // جدول درخواست استوری
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS story_requests (
+      )`,
+      
+      `CREATE TABLE IF NOT EXISTS story_requests (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         banner_text TEXT,
@@ -203,12 +228,9 @@ async function createTables() {
         approved_at TIMESTAMP,
         status VARCHAR(20) DEFAULT 'pending',
         points_awarded INTEGER DEFAULT 0
-      );
-    `);
-
-    // جدول فروشگاه امتیازی
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS point_shop_items (
+      )`,
+      
+      `CREATE TABLE IF NOT EXISTS point_shop_items (
         id SERIAL PRIMARY KEY,
         item_code VARCHAR(50) UNIQUE NOT NULL,
         item_name VARCHAR(100) NOT NULL,
@@ -218,23 +240,9 @@ async function createTables() {
         benefit_value INTEGER,
         max_purchases INTEGER DEFAULT NULL,
         is_active BOOLEAN DEFAULT TRUE
-      );
-    `);
-
-    // داده‌های اولیه فروشگاه
-    await pool.query(`
-      INSERT INTO point_shop_items (item_code, item_name, description, price, benefit_type, benefit_value) VALUES
-      ('extra_ai_2', '۲ سوال AI اضافی', 'خرید ۲ سوال اضافی برای چت با هوش مصنوعی', 50, 'ai_questions', 2),
-      ('media_access', 'دسترسی ارسال مدیا', 'اجازه ارسال عکس/ویدیو در چت با ادمین', 100, 'media_access', 1),
-      ('vip_1day', '۱ روز VIP رایگان', '۱ روز عضویت VIP رایگان', 200, 'vip_days', 1),
-      ('vip_3days', '۳ روز VIP رایگان', '۳ روز عضویت VIP رایگان', 500, 'vip_days', 3),
-      ('ai_5_questions', '۵ سوال AI اضافی', '۵ سوال اضافی برای چت با هوش مصنوعی', 100, 'ai_questions', 5)
-      ON CONFLICT (item_code) DO NOTHING;
-    `);
-
-    // جدول خریدهای کاربران
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS user_purchases (
+      )`,
+      
+      `CREATE TABLE IF NOT EXISTS user_purchases (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         item_code VARCHAR(50),
@@ -242,12 +250,9 @@ async function createTables() {
         purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         benefit_applied BOOLEAN DEFAULT FALSE,
         applied_at TIMESTAMP
-      );
-    `);
-
-    // جدول فعالیت‌های روزانه
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS daily_activities (
+      )`,
+      
+      `CREATE TABLE IF NOT EXISTS daily_activities (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         activity_date DATE NOT NULL,
@@ -255,12 +260,9 @@ async function createTables() {
         total_points INTEGER DEFAULT 0,
         has_daily_bonus BOOLEAN DEFAULT FALSE,
         UNIQUE(telegram_id, activity_date)
-      );
-    `);
-
-    // جدول پیام‌های همگانی
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS broadcast_messages (
+      )`,
+      
+      `CREATE TABLE IF NOT EXISTS broadcast_messages (
         id SERIAL PRIMARY KEY,
         admin_id BIGINT NOT NULL,
         target_type VARCHAR(50) NOT NULL,
@@ -271,12 +273,9 @@ async function createTables() {
         sent_count INTEGER DEFAULT 0,
         failed_count INTEGER DEFAULT 0,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // جدول پیام‌های کاربران
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS user_messages (
+      )`,
+      
+      `CREATE TABLE IF NOT EXISTS user_messages (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         message_text TEXT,
@@ -284,105 +283,48 @@ async function createTables() {
         media_file_id TEXT,
         is_from_user BOOLEAN DEFAULT TRUE,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // جدول چت‌های AI
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS ai_chats (
+      )`,
+      
+      `CREATE TABLE IF NOT EXISTS ai_chats (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         user_question TEXT,
         ai_response TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // تابع برای بررسی و اضافه کردن فیلدهای از دست رفته
-async function verifyAndFixDatabase() {
-  try {
-    console.log('🔍 بررسی ساختار دیتابیس...');
-    
-    // لیست فیلدهای ضروری که باید در جدول users باشند
-    const requiredColumns = [
-      { name: 'total_score', type: 'INTEGER DEFAULT 0' },
-      { name: 'current_level', type: 'INTEGER DEFAULT 0' },
-      { name: 'daily_streak', type: 'INTEGER DEFAULT 0' },
-      { name: 'last_activity_date', type: 'DATE' },
-      { name: 'weekly_ai_questions', type: 'INTEGER DEFAULT 0' },
-      { name: 'weekly_ai_limit', type: 'INTEGER DEFAULT 5' },
-      { name: 'can_send_media', type: 'BOOLEAN DEFAULT FALSE' },
-      { name: 'extra_ai_questions', type: 'INTEGER DEFAULT 0' },
-      { name: 'vip_days_from_points', type: 'INTEGER DEFAULT 0' },
-      { name: 'score', type: 'INTEGER DEFAULT 0' },
-      { name: 'level', type: 'INTEGER DEFAULT 1' }
+      )`
     ];
     
-    // بررسی وجود هر فیلد و اضافه کردن اگر وجود ندارد
-    for (const column of requiredColumns) {
+    for (const tableQuery of otherTables) {
       try {
-        // چک کردن وجود ستون
-        const checkQuery = `
-          SELECT column_name 
-          FROM information_schema.columns 
-          WHERE table_name = 'users' 
-          AND column_name = $1
-        `;
-        
-        const { rows } = await pool.query(checkQuery, [column.name]);
-        
-        if (rows.length === 0) {
-          // ستون وجود ندارد، اضافه کردن
-          const alterQuery = `ALTER TABLE users ADD COLUMN ${column.name} ${column.type}`;
-          await pool.query(alterQuery);
-          console.log(`✅ ستون "${column.name}" اضافه شد.`);
-        } else {
-          console.log(`✔️ ستون "${column.name}" از قبل موجود است.`);
-        }
+        await pool.query(tableQuery);
       } catch (err) {
-        // اگر خطایی در چک کردن وجود داشت، سعی می‌کنیم مستقیماً اضافه کنیم
-        if (err.message.includes('already exists') || err.message.includes('duplicate column')) {
-          console.log(`✔️ ستون "${column.name}" از قبل وجود دارد.`);
-        } else {
-          console.error(`❌ خطا در بررسی ستون "${column.name}":`, err.message);
-        }
+        console.log(`⚠️ در ایجاد جدول: ${err.message.substring(0, 50)}`);
       }
     }
     
-    // بررسی و ایجاد جدول levels اگر وجود ندارد
-    const { rows: levelsCheck } = await pool.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_name = 'levels'
-      )
-    `);
-    
-    if (!levelsCheck[0].exists) {
-      console.log('📊 ایجاد جدول levels...');
+    // 8. داده‌های اولیه فروشگاه
+    try {
       await pool.query(`
-        CREATE TABLE levels (
-          level_number INTEGER PRIMARY KEY,
-          name VARCHAR(50) NOT NULL,
-          emoji VARCHAR(10) NOT NULL,
-          min_score INTEGER NOT NULL,
-          benefits TEXT[] NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
+        INSERT INTO point_shop_items (item_code, item_name, description, price, benefit_type, benefit_value) VALUES
+        ('extra_ai_2', '۲ سوال AI اضافی', 'خرید ۲ سوال اضافی برای چت با هوش مصنوعی', 50, 'ai_questions', 2),
+        ('media_access', 'دسترسی ارسال مدیا', 'اجازه ارسال عکس/ویدیو در چت با ادمین', 100, 'media_access', 1),
+        ('vip_1day', '۱ روز VIP رایگان', '۱ روز عضویت VIP رایگان', 200, 'vip_days', 1),
+        ('vip_3days', '۳ روز VIP رایگان', '۳ روز عضویت VIP رایگان', 500, 'vip_days', 3),
+        ('ai_5_questions', '۵ سوال AI اضافی', '۵ سوال اضافی برای چت با هوش مصنوعی', 100, 'ai_questions', 5)
+        ON CONFLICT (item_code) DO NOTHING
       `);
-      
-      
-      console.log('✅ جدول levels ایجاد و داده‌های اولیه اضافه شدند.');
+      console.log('✅ داده‌های فروشگاه اضافه شدند');
+    } catch (err) {
+      console.log('⚠️ داده‌های فروشگاه از قبل وجود دارند');
     }
     
-    console.log('✅ بررسی ساختار دیتابیس تکمیل شد.');
+    console.log('🎉 تمام جدول‌ها با موفقیت ایجاد/بررسی شدند');
+    return true;
+    
   } catch (err) {
-    console.error('❌ خطا در بررسی دیتابیس:', err.message);
-  }
-}
-
-    console.log('✅ تمام جدول‌ها آماده شدند.');
-  } catch (err) {
-    console.error('❌ خطا در ساخت جدول‌ها:', err.message);
+    console.error('❌ خطای جدی در ایجاد جدول‌ها:', err.message);
+    console.error('جزئیات خطا:', err);
+    return false;
   }
 }
 
@@ -2525,80 +2467,6 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
 bot.on('error', (err) => console.error('❌ خطای Bot:', err.message));
-
-// ==================== تابع بررسی و اصلاح دیتابیس ====================
-async function verifyAndFixDatabase() {
-  try {
-    console.log('🔍 بررسی و اصلاح ساختار دیتابیس...');
-    
-    // فهرست ستون‌های ضروری
-    const requiredColumns = [
-      'total_score INTEGER DEFAULT 0',
-      'current_level INTEGER DEFAULT 0', 
-      'daily_streak INTEGER DEFAULT 0',
-      'last_activity_date DATE',
-      'weekly_ai_questions INTEGER DEFAULT 0',
-      'weekly_ai_limit INTEGER DEFAULT 5',
-      'can_send_media BOOLEAN DEFAULT FALSE',
-      'extra_ai_questions INTEGER DEFAULT 0',
-      'vip_days_from_points INTEGER DEFAULT 0',
-      'score INTEGER DEFAULT 0',
-      'level INTEGER DEFAULT 1'
-    ];
-    
-    // اضافه کردن ستون‌های گمشده
-    for (const columnDef of requiredColumns) {
-      const [colName, colType] = columnDef.split(' ');
-      try {
-        const alterQuery = `ALTER TABLE users ADD COLUMN IF NOT EXISTS ${colName} ${colType}`;
-        await pool.query(alterQuery);
-        console.log(`✅ ستون ${colName} اضافه/بررسی شد`);
-      } catch (err) {
-        if (!err.message.includes('already exists')) {
-          console.error(`⚠️ خطا در ستون ${colName}:`, err.message);
-        }
-      }
-    }
-    
-    // بررسی جدول levels
-    try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS levels (
-          level_number INTEGER PRIMARY KEY,
-          name VARCHAR(50) NOT NULL,
-          emoji VARCHAR(10) NOT NULL,
-          min_score INTEGER NOT NULL,
-          benefits TEXT[] NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      
-      // درج داده‌های اولیه
-      await pool.query(`
-        INSERT INTO levels (level_number, name, emoji, min_score, benefits) VALUES
-        (1, 'Beginner', '🥉', 500, ARRAY['+1 سوال AI در هفته']),
-        (2, 'Explorer', '🥈', 1000, ARRAY['+2 سوال AI در هفته']),
-        (3, 'Regular', '🥇', 2500, ARRAY['+5 سوال AI در هفته']),
-        (4, 'Advanced', '🏅', 4000, ARRAY['+10 سوال AI در هفته', 'آخرین پست کانال VIP']),
-        (5, 'Veteran', '🏆', 6000, ARRAY['آخرین پست کانال VIP', '1 هفته عضویت VIP']),
-        (6, 'Master', '💎', 9000, ARRAY['1 هفته عضویت VIP', 'ارسال مدیا در چت ادمین']),
-        (7, 'Champion', '👑', 10000, ARRAY['1 ماه عضویت VIP رایگان'])
-        ON CONFLICT (level_number) DO NOTHING
-      `);
-      console.log('✅ جدول levels بررسی شد');
-    } catch (err) {
-      console.error('⚠️ خطا در جدول levels:', err.message);
-    }
-    
-    console.log('✅ بررسی دیتابیس کامل شد');
-  } catch (err) {
-    console.error('❌ خطا در بررسی دیتابیس:', err.message);
-  }
-}
-// ==================== پایان تابع ====================
-
-
-
 
 
 
