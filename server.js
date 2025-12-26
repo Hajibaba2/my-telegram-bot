@@ -31,23 +31,18 @@ const bot = new TelegramBot(BOT_TOKEN);
 let openai = null;
 const states = {};
 
-function createReplyKeyboard(keyboardArray, options = {}) {
-  return {
-    reply_markup: {
-      keyboard: keyboardArray,
-      resize_keyboard: true,
-      one_time_keyboard: options.one_time || false,
-      input_field_placeholder: options.placeholder || ''
-    }
-  };
-}
+// endpoint سلامت
+app.get('/health', (req, res) => res.status(200).send('OK'));
+app.post('/health', (req, res) => res.status(200).send('OK'));
 
-function confirmKeyboard(action) {
-  return createReplyKeyboard([
-    [{ text: `✅ تأیید ${action}` }],
-    [{ text: '❌ لغو' }]
-  ], { one_time: true });
-}
+// endpoint webhook
+app.post(`/bot${BOT_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+// اگر GET به webhook بیاد (تلگرام برای چک زنده بودن می‌زنه)
+app.get(`/bot${BOT_TOKEN}`, (req, res) => res.status(200).send('OK'));
 
 async function createTables() {
   try {
@@ -112,7 +107,7 @@ async function createTables() {
     `);
 
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS user_messages (
+      CREATE TABLE IF NOT EXISTS user-messages (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         message_text TEXT,
@@ -159,7 +154,7 @@ async function isVip(id) {
 async function isRegistered(id) {
   try {
     const { rows } = await pool.query('SELECT name FROM users WHERE telegram_id = $1', [id]);
-    return rows.length > 0 && rows[0].name != null;
+    return rows.length > 0 && rows[0].name !== null && rows[0].name.trim() !== '';
   } catch (err) {
     return false;
   }
@@ -178,45 +173,48 @@ async function downloadFile(fileId) {
   }
 }
 
-app.post(`/bot${BOT_TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
-});
-
-async function gracefulShutdown() {
-  try { await bot.stopPolling(); } catch (err) {}
-  try { await bot.deleteWebHook(); } catch (err) {}
-  await pool.end();
-  process.exit(0);
-}
-
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
 process.on('unhandledRejection', (reason) => console.error('Unhandled Rejection:', reason));
 bot.on('error', (err) => console.error('خطای Bot:', err.message));
 
 app.listen(PORT, async () => {
   await createTables();
 
-  const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || process.env.RENDER_EXTERNAL_URL;
-
-  if (domain && domain.trim() !== '') {
-    const webhookUrl = `https://\( {domain.trim()}/bot \){BOT_TOKEN}`;
-    try {
-      await bot.setWebHook(webhookUrl);
-      console.log(`Webhook با موفقیت تنظیم شد: ${webhookUrl}`);
-    } catch (err) {
-      console.error('خطا در تنظیم webhook، سوئیچ به polling:', err.message);
-      bot.startPolling();
-      console.log('ربات با polling فعال شد.');
-    }
-  } else {
-    console.log('دامنه عمومی یافت نشد، ربات با polling فعال شد.');
-    bot.startPolling();
+  const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
+  if (!domain || domain.trim() === '') {
+    console.error('خطا انتقادی: دامنه عمومی تنظیم نشده است!');
+    process.exit(1);
   }
 
-  console.log('KaniaChatBot آماده است! 🚀');
+  const webhookUrl = `https://\( {domain.trim()}/bot \){BOT_TOKEN}`;
+
+  try {
+    await bot.setWebHook(webhookUrl);
+    console.log(`Webhook با موفقیت تنظیم شد: ${webhookUrl}`);
+  } catch (err) {
+    console.error('خطا در تنظیم webhook:', err.message);
+    process.exit(1);
+  }
+
+  console.log('KaniaChatBot با webhook آماده است! 🚀');
 });
+
+function createReplyKeyboard(keyboardArray, options = {}) {
+  return {
+    reply_markup: {
+      keyboard: keyboardArray,
+      resize_keyboard: true,
+      one_time_keyboard: options.one_time || false,
+      input_field_placeholder: options.placeholder || ''
+    }
+  };
+}
+
+function confirmKeyboard(action) {
+  return createReplyKeyboard([
+    [{ text: `✅ تأیید ${action}` }],
+    [{ text: '❌ لغو' }]
+  ], { one_time: true });
+}
 
 function mainKeyboard(reg, admin) {
   const k = [
@@ -871,4 +869,4 @@ bot.on('callback_query', async (query) => {
   bot.answerCallbackQuery(query.id);
 });
 
-console.log('KaniaChatBot — نسخه نهایی، ۱۰۰% کامل و بدون خطا 🚀');
+console.log('KaniaChatBot — نسخه نهایی، کامل، بدون نقص و آماده deploy 🚀');
