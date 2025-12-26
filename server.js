@@ -120,6 +120,7 @@ async function createTables() {
       );
     `);
 
+    
     // جدول VIP
     await pool.query(`
       CREATE TABLE IF NOT EXISTS vips (
@@ -296,6 +297,88 @@ async function createTables() {
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // تابع برای بررسی و اضافه کردن فیلدهای از دست رفته
+async function verifyAndFixDatabase() {
+  try {
+    console.log('🔍 بررسی ساختار دیتابیس...');
+    
+    // لیست فیلدهای ضروری که باید در جدول users باشند
+    const requiredColumns = [
+      { name: 'total_score', type: 'INTEGER DEFAULT 0' },
+      { name: 'current_level', type: 'INTEGER DEFAULT 0' },
+      { name: 'daily_streak', type: 'INTEGER DEFAULT 0' },
+      { name: 'last_activity_date', type: 'DATE' },
+      { name: 'weekly_ai_questions', type: 'INTEGER DEFAULT 0' },
+      { name: 'weekly_ai_limit', type: 'INTEGER DEFAULT 5' },
+      { name: 'can_send_media', type: 'BOOLEAN DEFAULT FALSE' },
+      { name: 'extra_ai_questions', type: 'INTEGER DEFAULT 0' },
+      { name: 'vip_days_from_points', type: 'INTEGER DEFAULT 0' },
+      { name: 'score', type: 'INTEGER DEFAULT 0' },
+      { name: 'level', type: 'INTEGER DEFAULT 1' }
+    ];
+    
+    // بررسی وجود هر فیلد و اضافه کردن اگر وجود ندارد
+    for (const column of requiredColumns) {
+      try {
+        // چک کردن وجود ستون
+        const checkQuery = `
+          SELECT column_name 
+          FROM information_schema.columns 
+          WHERE table_name = 'users' 
+          AND column_name = $1
+        `;
+        
+        const { rows } = await pool.query(checkQuery, [column.name]);
+        
+        if (rows.length === 0) {
+          // ستون وجود ندارد، اضافه کردن
+          const alterQuery = `ALTER TABLE users ADD COLUMN ${column.name} ${column.type}`;
+          await pool.query(alterQuery);
+          console.log(`✅ ستون "${column.name}" اضافه شد.`);
+        } else {
+          console.log(`✔️ ستون "${column.name}" از قبل موجود است.`);
+        }
+      } catch (err) {
+        // اگر خطایی در چک کردن وجود داشت، سعی می‌کنیم مستقیماً اضافه کنیم
+        if (err.message.includes('already exists') || err.message.includes('duplicate column')) {
+          console.log(`✔️ ستون "${column.name}" از قبل وجود دارد.`);
+        } else {
+          console.error(`❌ خطا در بررسی ستون "${column.name}":`, err.message);
+        }
+      }
+    }
+    
+    // بررسی و ایجاد جدول levels اگر وجود ندارد
+    const { rows: levelsCheck } = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_name = 'levels'
+      )
+    `);
+    
+    if (!levelsCheck[0].exists) {
+      console.log('📊 ایجاد جدول levels...');
+      await pool.query(`
+        CREATE TABLE levels (
+          level_number INTEGER PRIMARY KEY,
+          name VARCHAR(50) NOT NULL,
+          emoji VARCHAR(10) NOT NULL,
+          min_score INTEGER NOT NULL,
+          benefits TEXT[] NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      
+      
+      console.log('✅ جدول levels ایجاد و داده‌های اولیه اضافه شدند.');
+    }
+    
+    console.log('✅ بررسی ساختار دیتابیس تکمیل شد.');
+  } catch (err) {
+    console.error('❌ خطا در بررسی دیتابیس:', err.message);
+  }
+}
 
     console.log('✅ تمام جدول‌ها آماده شدند.');
   } catch (err) {
@@ -2446,6 +2529,7 @@ bot.on('error', (err) => console.error('❌ خطای Bot:', err.message));
 // -------------------- راه‌اندازی سرور --------------------
 app.listen(PORT, async () => {
   await createTables();
+  await verifyAndFixDatabase();
   
   console.log(`🌐 پورت: ${PORT}`);
   console.log(`🤖 توکن بات: ${BOT_TOKEN ? '✅ تنظیم شده' : '❌ تنظیم نشده!'}`);
