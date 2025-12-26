@@ -31,7 +31,7 @@ const bot = new TelegramBot(BOT_TOKEN);
 let openai = null;
 const states = {};
 
-// endpoint سلامت (برای چک تلگرام و Railway)
+// endpoint سلامت
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.post('/health', (req, res) => res.status(200).send('OK'));
 
@@ -41,7 +41,7 @@ app.post(`/bot${BOT_TOKEN}`, (req, res) => {
   res.sendStatus(200);
 });
 
-// تلگرام اول GET می‌زنه تا چک کنه سرور زنده است – این مهمه!
+// GET برای چک زنده بودن توسط تلگرام
 app.get(`/bot${BOT_TOKEN}`, (req, res) => res.status(200).send('OK'));
 
 async function createTables() {
@@ -183,34 +183,29 @@ app.listen(PORT, async () => {
 
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
   if (!domain || domain.trim() === '') {
-    console.error('خطا انتقادی: دامنه عمومی (RAILWAY_PUBLIC_DOMAIN یا RAILWAY_STATIC_URL) تنظیم نشده است!');
-    process.exit(1);
-  }
+    console.error('دامنه عمومی تنظیم نشده است – webhook ست نمی‌شود، اما سرور بالا می‌ماند.');
+  } else {
+    const trimmedDomain = domain.trim().replace(/\/+$/, '');
+    const webhookUrl = `https://\( {trimmedDomain}/bot \){BOT_TOKEN}`;
 
-  const trimmedDomain = domain.trim().replace(/\/+$/, ''); // حذف اسلش‌های آخر
-  const webhookUrl = `https://\( {trimmedDomain}/bot \){BOT_TOKEN}`;
-
-  try {
-    // چک زنده بودن سرور
-    const healthCheck = await fetch(`https://${trimmedDomain}/health`, { method: 'GET', timeout: 10000 });
-    if (!healthCheck.ok) throw new Error('سرور به درخواست health پاسخ مناسب نداد');
-
-    const info = await bot.getWebHookInfo();
-    if (info.url === webhookUrl) {
-      console.log('Webhook قبلاً درست ست شده است – بدون تغییر حفظ شد.');
-    } else {
-      console.log('Webhook قبلی متفاوت یا خالی بود – در حال بروزرسانی...');
-      await bot.deleteWebHook();
-      await bot.setWebHook(webhookUrl);
-      console.log(`Webhook با موفقیت تنظیم شد: ${webhookUrl}`);
+    try {
+      const info = await bot.getWebHookInfo();
+      if (info.url === webhookUrl) {
+        console.log('Webhook قبلاً درست ست شده است – بدون تغییر.');
+      } else {
+        console.log('Webhook قبلی متفاوت یا خالی بود – در حال بروزرسانی...');
+        await bot.deleteWebHook();
+        await bot.setWebHook(webhookUrl);
+        console.log(`Webhook با موفقیت تنظیم شد: ${webhookUrl}`);
+      }
+    } catch (err) {
+      console.error('خطا در تنظیم webhook:', err.message);
+      console.error('ربات بالا ماند، اما webhook ست نشد. دستی با لینک زیر ست کن:');
+      console.error(`https://api.telegram.org/bot\( {BOT_TOKEN}/setWebhook?url= \){webhookUrl}`);
     }
-  } catch (err) {
-    console.error('خطا در تنظیم webhook:', err.message);
-    console.error('ممکن است دامنه اشتباه باشد یا سرور هنوز آماده نیست. متغیر RAILWAY_PUBLIC_DOMAIN را چک کنید.');
-    process.exit(1);
   }
 
-  console.log('KaniaChatBot با webhook آماده است! 🚀');
+  console.log('KaniaChatBot آماده است! 🚀');
 });
 
 function createReplyKeyboard(keyboardArray, options = {}) {
@@ -884,4 +879,4 @@ bot.on('callback_query', async (query) => {
   bot.answerCallbackQuery(query.id);
 });
 
-console.log('KaniaChatBot — نسخه نهایی، با webhook پایدار و بدون خطای invalid URL 🚀');
+console.log('KaniaChatBot — نسخه نهایی، بدون loop خطا و webhook پایدار 🚀');
