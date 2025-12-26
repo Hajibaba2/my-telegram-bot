@@ -2526,6 +2526,82 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 bot.on('error', (err) => console.error('❌ خطای Bot:', err.message));
 
+// ==================== تابع بررسی و اصلاح دیتابیس ====================
+async function verifyAndFixDatabase() {
+  try {
+    console.log('🔍 بررسی و اصلاح ساختار دیتابیس...');
+    
+    // فهرست ستون‌های ضروری
+    const requiredColumns = [
+      'total_score INTEGER DEFAULT 0',
+      'current_level INTEGER DEFAULT 0', 
+      'daily_streak INTEGER DEFAULT 0',
+      'last_activity_date DATE',
+      'weekly_ai_questions INTEGER DEFAULT 0',
+      'weekly_ai_limit INTEGER DEFAULT 5',
+      'can_send_media BOOLEAN DEFAULT FALSE',
+      'extra_ai_questions INTEGER DEFAULT 0',
+      'vip_days_from_points INTEGER DEFAULT 0',
+      'score INTEGER DEFAULT 0',
+      'level INTEGER DEFAULT 1'
+    ];
+    
+    // اضافه کردن ستون‌های گمشده
+    for (const columnDef of requiredColumns) {
+      const [colName, colType] = columnDef.split(' ');
+      try {
+        const alterQuery = `ALTER TABLE users ADD COLUMN IF NOT EXISTS ${colName} ${colType}`;
+        await pool.query(alterQuery);
+        console.log(`✅ ستون ${colName} اضافه/بررسی شد`);
+      } catch (err) {
+        if (!err.message.includes('already exists')) {
+          console.error(`⚠️ خطا در ستون ${colName}:`, err.message);
+        }
+      }
+    }
+    
+    // بررسی جدول levels
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS levels (
+          level_number INTEGER PRIMARY KEY,
+          name VARCHAR(50) NOT NULL,
+          emoji VARCHAR(10) NOT NULL,
+          min_score INTEGER NOT NULL,
+          benefits TEXT[] NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      
+      // درج داده‌های اولیه
+      await pool.query(`
+        INSERT INTO levels (level_number, name, emoji, min_score, benefits) VALUES
+        (1, 'Beginner', '🥉', 500, ARRAY['+1 سوال AI در هفته']),
+        (2, 'Explorer', '🥈', 1000, ARRAY['+2 سوال AI در هفته']),
+        (3, 'Regular', '🥇', 2500, ARRAY['+5 سوال AI در هفته']),
+        (4, 'Advanced', '🏅', 4000, ARRAY['+10 سوال AI در هفته', 'آخرین پست کانال VIP']),
+        (5, 'Veteran', '🏆', 6000, ARRAY['آخرین پست کانال VIP', '1 هفته عضویت VIP']),
+        (6, 'Master', '💎', 9000, ARRAY['1 هفته عضویت VIP', 'ارسال مدیا در چت ادمین']),
+        (7, 'Champion', '👑', 10000, ARRAY['1 ماه عضویت VIP رایگان'])
+        ON CONFLICT (level_number) DO NOTHING
+      `);
+      console.log('✅ جدول levels بررسی شد');
+    } catch (err) {
+      console.error('⚠️ خطا در جدول levels:', err.message);
+    }
+    
+    console.log('✅ بررسی دیتابیس کامل شد');
+  } catch (err) {
+    console.error('❌ خطا در بررسی دیتابیس:', err.message);
+  }
+}
+// ==================== پایان تابع ====================
+
+
+
+
+
+
 // -------------------- راه‌اندازی سرور --------------------
 app.listen(PORT, async () => {
   await createTables();
