@@ -28,7 +28,10 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
-const bot = new TelegramBot(BOT_TOKEN);
+const bot = new TelegramBot(BOT_TOKEN, {
+  polling: false,
+  filepath: false
+});
 let openai = null;
 const states = {};
 
@@ -59,6 +62,69 @@ function checkRateLimit(userId) {
 // لاگ فعالیت
 function logActivity(userId, action, details = '') {
   console.log(`[${new Date().toISOString()}] User ${userId}: ${action} ${details}`);
+}
+
+// تابع زیباسازی گزارش کاربران
+function formatUserReport(user, action = 'ثبت‌نام', username = null) {
+  const emojiMap = {
+    'ثبت‌نام': '🆕',
+    'ویرایش': '✏️',
+    'VIP': '💎',
+    'پیام': '💬',
+    'AI': '🤖'
+  };
+  
+  const emoji = emojiMap[action] || '📋';
+  
+  let report = `${emoji} *${action} ${action === 'ثبت‌نام' ? 'جدید' : 'اطلاعات'}*\n`;
+  report += `━━━━━━━━━━━━━━━━\n`;
+  report += `👤 *نام کاربری:* ${username || user.username || 'ندارد'}\n`;
+  report += `🆔 *آیدی عددی:* \`${user.telegram_id}\`\n`;
+  report += `📛 *نام:* ${user.name || 'نامشخص'}\n`;
+  report += `🎂 *سن:* ${user.age || 'نامشخص'}\n`;
+  report += `🏙️ *شهر:* ${user.city || 'نامشخص'}\n`;
+  report += `🌍 *منطقه:* ${user.region || 'نامشخص'}\n`;
+  report += `💼 *شغل:* ${user.job || 'نامشخص'}\n`;
+  report += `⚧️ *جنسیت:* ${user.gender || 'نامشخص'}\n`;
+  report += `🎯 *هدف:* ${user.goal || 'نامشخص'}\n`;
+  report += `📱 *شماره:* ${user.phone || 'نامشخص'}\n`;
+  report += `📅 *تاریخ ${action === 'ثبت‌نام' ? 'ثبت‌نام' : 'ویرایش'}:* ${moment().format('jYYYY/jM/jD HH:mm')}\n`;
+  report += `━━━━━━━━━━━━━━━━`;
+  
+  return report;
+}
+
+// تابع برای لیست زیبای کاربران
+function formatUserList(users, title = 'کاربران', type = 'normal') {
+  const emojiMap = {
+    'normal': '👤',
+    'vip': '💎',
+    'all': '📊'
+  };
+  
+  const emoji = emojiMap[type] || '👥';
+  let list = `${emoji} *${title}*\n`;
+  list += `━━━━━━━━━━━━━━━━\n`;
+  
+  if (users.length === 0) {
+    list += `📭 لیست خالی است\n`;
+  } else {
+    users.forEach((user, index) => {
+      const vipBadge = user.vip ? ' 💎' : '';
+      list += `${index + 1}. ${user.name || 'نامشخص'}${vipBadge}\n`;
+      list += `   🆔: \`${user.telegram_id}\`\n`;
+      list += `   👤: @${user.username || 'ندارد'}\n`;
+      if (user.registration_date) {
+        list += `   📅: ${moment(user.registration_date).format('jYYYY/jM/jD')}\n`;
+      }
+      list += `   ──────────────\n`;
+    });
+  }
+  
+  list += `━━━━━━━━━━━━━━━━\n`;
+  list += `📊 تعداد: ${users.length} کاربر`;
+  
+  return list;
 }
 
 function createReplyKeyboard(keyboardArray, options = {}) {
@@ -546,22 +612,22 @@ bot.on('message', async (msg) => {
     }
     
     const u = rows[0];
-    const stats = `📊 آمار شما:\nنام: ${u.name || 'نامشخص'}\nامتیاز: ${u.score}\nلِوِل: ${u.level}\nسوالات AI: ${u.ai_questions_used || 0}\nوضعیت VIP: ${vip ? '✅ فعال' : '❌ غیرفعال'}\nتاریخ ثبت‌نام: ${moment(u.registration_date).format('jYYYY/jM/jD')}`;
+    const stats = `📊 *آمار شما*\n━━━━━━━━━━━━━━━━\n📛 *نام:* ${u.name || 'نامشخص'}\n⭐ *امتیاز:* ${u.score}\n📈 *لِوِل:* ${u.level}\n🤖 *سوالات AI:* ${u.ai_questions_used || 0}\n💎 *وضعیت VIP:* ${vip ? '✅ فعال' : '❌ غیرفعال'}\n📅 *تاریخ ثبت‌نام:* ${moment(u.registration_date).format('jYYYY/jM/jD')}\n━━━━━━━━━━━━━━━━`;
     
-    bot.sendMessage(id, stats, mainKeyboard(true, admin));
+    bot.sendMessage(id, stats, { parse_mode: 'Markdown', ...mainKeyboard(true, admin) });
     return;
   }
   
   if (text === '📺 کانال رایگان') {
     const { rows } = await pool.query('SELECT free_channel FROM settings');
-    bot.sendMessage(id, `📢 کانال رایگان:\n${rows[0]?.free_channel || 'تنظیم نشده ⚠️'}`);
+    bot.sendMessage(id, `📢 *کانال رایگان*\n━━━━━━━━━━━━━━━━\n${rows[0]?.free_channel || 'تنظیم نشده ⚠️'}\n━━━━━━━━━━━━━━━━`, { parse_mode: 'Markdown' });
   } else if (text === '💎 عضویت VIP') {
     const { rows } = await pool.query('SELECT membership_fee, wallet_address, network FROM settings');
     const s = rows[0];
     
     if (s?.membership_fee && s?.wallet_address && s?.network) {
-      const msgText = `💎 عضویت VIP 💎\n\nمبلغ: ${s.membership_fee}\n\nآدرس کیف پول:\n${s.wallet_address}\n\nشبکه: ${s.network}\n\nپس از واریز، عکس فیش را ارسال کنید.`;
-      bot.sendMessage(id, msgText, vipKeyboard());
+      const msgText = `💎 *عضویت VIP* 💎\n━━━━━━━━━━━━━━━━\n💰 *مبلغ:* ${s.membership_fee}\n\n👛 *آدرس کیف پول:*\n\`${s.wallet_address}\`\n\n🌐 *شبکه:* ${s.network}\n━━━━━━━━━━━━━━━━\n📸 پس از واریز، عکس فیش را ارسال کنید.`;
+      bot.sendMessage(id, msgText, { parse_mode: 'Markdown', ...vipKeyboard() });
       states[id] = { type: 'vip_waiting' };
     } else {
       bot.sendMessage(id, '⚠️ اطلاعات VIP توسط ادمین تنظیم نشده است.');
@@ -581,7 +647,7 @@ bot.on('message', async (msg) => {
     const registered = await isRegistered(id);
     if (!registered) {
       states[id] = { type: 'register_full', step: 0, data: {} };
-      bot.sendMessage(id, '📝 ثبت‌نام جدید\n\n👤 نام خود را وارد کنید:');
+      bot.sendMessage(id, '📝 *ثبت‌نام جدید*\n━━━━━━━━━━━━━━━━\n👤 نام خود را وارد کنید:', { parse_mode: 'Markdown' });
     } else {
       bot.sendMessage(id, '✏️ کدام فیلد را می‌خواهید ویرایش کنید؟', editKeyboard());
       states[id] = { type: 'edit_menu' };
@@ -589,25 +655,26 @@ bot.on('message', async (msg) => {
   } else if (admin) {
     // منوی ادمین
     if (text === '🛡️ پنل ادمین') {
-      bot.sendMessage(id, '🛡️ پنل ادمین فعال شد', adminKeyboard());
+      bot.sendMessage(id, '🛡️ *پنل ادمین فعال شد*', { parse_mode: 'Markdown', ...adminKeyboard() });
     } else if (text === '🤖 هوش مصنوعی') {
-      bot.sendMessage(id, '🤖 مدیریت هوش مصنوعی:', aiAdminKeyboard());
+      bot.sendMessage(id, '🤖 *مدیریت هوش مصنوعی:*', { parse_mode: 'Markdown', ...aiAdminKeyboard() });
       states[id] = { type: 'admin_ai_menu' };
     } else if (text === '📺 کانال‌ها') {
-      bot.sendMessage(id, '⚙️ تنظیمات کانال‌ها و VIP:', channelsKeyboard());
+      bot.sendMessage(id, '⚙️ *تنظیمات کانال‌ها و VIP:*', { parse_mode: 'Markdown', ...channelsKeyboard() });
       states[id] = { type: 'admin_channels_menu' };
     } else if (text === '👥 کاربران') {
-      bot.sendMessage(id, '👥 مدیریت کاربران:', usersKeyboard());
+      bot.sendMessage(id, '👥 *مدیریت کاربران:*', { parse_mode: 'Markdown', ...usersKeyboard() });
       states[id] = { type: 'admin_users_menu' };
     } else if (text === '📨 پیامرسانی') {
-      bot.sendMessage(id, '📨 پیامرسانی:', broadcastKeyboard());
+      bot.sendMessage(id, '📨 *پیامرسانی:*', { parse_mode: 'Markdown', ...broadcastKeyboard() });
       states[id] = { type: 'admin_broadcast_menu' };
     } else if (text === '📊 آمار') {
       const { rows: total } = await pool.query('SELECT COUNT(*) FROM users');
       const { rows: vipCount } = await pool.query('SELECT COUNT(*) FROM vips WHERE approved AND end_date > NOW()');
-      bot.sendMessage(id, `📊 آمار کلی:\nکل کاربران: ${total[0].count}\nکاربران VIP فعال: ${vipCount[0].count}`);
+      const stats = `📊 *آمار کلی*\n━━━━━━━━━━━━━━━━\n👥 *کل کاربران:* ${total[0].count}\n💎 *کاربران VIP فعال:* ${vipCount[0].count}\n📈 *نسبت VIP:* ${((vipCount[0].count / total[0].count) * 100 || 0).toFixed(1)}%\n━━━━━━━━━━━━━━━━`;
+      bot.sendMessage(id, stats, { parse_mode: 'Markdown' });
     } else if (text === '🔄 ریست دیتابیس') {
-      bot.sendMessage(id, '⚠️ آیا مطمئن هستید؟ تمام داده‌ها پاک می‌شود!', confirmKeyboard('ریست دیتابیس'));
+      bot.sendMessage(id, '⚠️ *آیا مطمئن هستید؟* تمام داده‌ها پاک می‌شود!', { parse_mode: 'Markdown', ...confirmKeyboard('ریست دیتابیس') });
       states[id] = { type: 'confirm_reset_db' };
     } else if (text === '↩️ بازگشت به منو اصلی') {
       delete states[id];
@@ -625,7 +692,20 @@ async function handleState(id, text, msg) {
     // مدیریت هوش مصنوعی ادمین
     if (state.type === 'admin_ai_menu') {
       if (text === '⚙️ تنظیم توکن API') {
-        bot.sendMessage(id, '🔑 توکن OpenAI را وارد کنید:');
+        // دریافت توکن فعلی برای نمایش
+        const { rows } = await pool.query('SELECT ai_token FROM settings');
+        const currentToken = rows[0]?.ai_token;
+        
+        let message = '🔑 *تنظیم توکن OpenAI*\n━━━━━━━━━━━━━━━━\n';
+        if (currentToken) {
+          const maskedToken = currentToken.substring(0, 10) + '...' + currentToken.substring(currentToken.length - 4);
+          message += `*توکن فعلی:* \`${maskedToken}\`\n`;
+        } else {
+          message += '*توکن فعلی:* تنظیم نشده\n';
+        }
+        message += '━━━━━━━━━━━━━━━━\nلطفاً توکن جدید را وارد کنید:';
+        
+        bot.sendMessage(id, message, { parse_mode: 'Markdown' });
         states[id] = { type: 'set_ai_token' };
       } else if (text === '📂 ارسال فایل پرامپت') {
         bot.sendMessage(id, '📂 فایل پرامپت (.txt) را ارسال کنید:');
@@ -635,7 +715,7 @@ async function handleState(id, text, msg) {
         const prompt = rows[0]?.prompt_content || 'پرامپت تنظیم نشده است.';
         
         if (prompt.length <= 3800) {
-          bot.sendMessage(id, `👀 پرامپت فعلی:\n\n${prompt}`);
+          bot.sendMessage(id, `👀 *پرامپت فعلی*\n━━━━━━━━━━━━━━━━\n${prompt}\n━━━━━━━━━━━━━━━━`, { parse_mode: 'Markdown' });
         } else {
           const tempFilePath = path.join('/tmp', 'prompt.txt');
           fs.writeFileSync(tempFilePath, prompt, 'utf8');
@@ -643,7 +723,7 @@ async function handleState(id, text, msg) {
           fs.unlinkSync(tempFilePath);
         }
       } else if (text === '🗑️ حذف پرامپت') {
-        bot.sendMessage(id, '⚠️ آیا مطمئن هستید؟', confirmKeyboard('حذف پرامپت'));
+        bot.sendMessage(id, '⚠️ *آیا مطمئن هستید؟*', { parse_mode: 'Markdown', ...confirmKeyboard('حذف پرامپت') });
         states[id] = { type: 'confirm_delete_prompt' };
       } else if (text === '↩️ بازگشت به پنل ادمین') {
         delete states[id];
@@ -655,12 +735,12 @@ async function handleState(id, text, msg) {
     if (state.type === 'confirm_delete_prompt') {
       if (text.startsWith('✅ تأیید حذف پرامپت')) {
         await pool.query('UPDATE settings SET prompt_content = NULL');
-        bot.sendMessage(id, '🗑️ پرامپت حذف شد.');
+        bot.sendMessage(id, '🗑️ *پرامپت حذف شد.*', { parse_mode: 'Markdown' });
       } else if (text === '❌ لغو') {
         bot.sendMessage(id, '❌ عملیات لغو شد.');
       }
       delete states[id];
-      bot.sendMessage(id, '🤖 مدیریت هوش مصنوعی:', aiAdminKeyboard());
+      bot.sendMessage(id, '🤖 *مدیریت هوش مصنوعی:*', { parse_mode: 'Markdown', ...aiAdminKeyboard() });
       states[id] = { type: 'admin_ai_menu' };
       return;
     }
@@ -668,9 +748,14 @@ async function handleState(id, text, msg) {
     if (state.type === 'set_ai_token') {
       await pool.query('UPDATE settings SET ai_token = $1', [text]);
       openai = new OpenAI({ apiKey: text });
-      bot.sendMessage(id, '✅ توکن ذخیره شد.');
+      
+      // نمایش پیام تأیید زیبا
+      const maskedToken = text.substring(0, 10) + '...' + text.substring(text.length - 4);
+      const confirmMsg = `✅ *توکن ذخیره شد*\n━━━━━━━━━━━━━━━━\n*توکن جدید:* \`${maskedToken}\`\n*زمان ذخیره:* ${moment().format('jYYYY/jM/jD HH:mm')}\n━━━━━━━━━━━━━━━━`;
+      
+      bot.sendMessage(id, confirmMsg, { parse_mode: 'Markdown' });
       delete states[id];
-      bot.sendMessage(id, '🤖 مدیریت هوش مصنوعی:', aiAdminKeyboard());
+      bot.sendMessage(id, '🤖 *مدیریت هوش مصنوعی:*', { parse_mode: 'Markdown', ...aiAdminKeyboard() });
       states[id] = { type: 'admin_ai_menu' };
       return;
     }
@@ -679,12 +764,12 @@ async function handleState(id, text, msg) {
       const content = await downloadFile(msg.document.file_id);
       if (content) {
         await pool.query('UPDATE settings SET prompt_content = $1', [content]);
-        bot.sendMessage(id, '✅ پرامپت ذخیره شد.');
+        bot.sendMessage(id, '✅ *پرامپت ذخیره شد.*', { parse_mode: 'Markdown' });
       } else {
         bot.sendMessage(id, '❌ خطا در خواندن فایل.');
       }
       delete states[id];
-      bot.sendMessage(id, '🤖 مدیریت هوش مصنوعی:', aiAdminKeyboard());
+      bot.sendMessage(id, '🤖 *مدیریت هوش مصنوعی:*', { parse_mode: 'Markdown', ...aiAdminKeyboard() });
       states[id] = { type: 'admin_ai_menu' };
       return;
     }
@@ -702,7 +787,8 @@ async function handleState(id, text, msg) {
       if (fieldMap[text]) {
         const { rows } = await pool.query(`SELECT ${fieldMap[text]} FROM settings`);
         const current = rows[0][fieldMap[text]] || 'تنظیم نشده';
-        bot.sendMessage(id, `مقدار فعلی: ${current}\nمقدار جدید را وارد کنید یا /cancel برای لغو.`);
+        const message = `⚙️ *تنظیم ${text}*\n━━━━━━━━━━━━━━━━\n*مقدار فعلی:* ${current}\n━━━━━━━━━━━━━━━━\nمقدار جدید را وارد کنید یا /cancel برای لغو.`;
+        bot.sendMessage(id, message, { parse_mode: 'Markdown' });
         states[id] = { type: `set_${fieldMap[text]}` };
       } else if (text === '↩️ بازگشت به پنل ادمین') {
         delete states[id];
@@ -720,9 +806,21 @@ async function handleState(id, text, msg) {
       }
       const field = state.type.replace('set_', '');
       await pool.query(`UPDATE settings SET ${field} = $1`, [text]);
-      bot.sendMessage(id, '✅ بروزرسانی شد.');
+      
+      const fieldNames = {
+        'free_channel': 'لینک کانال رایگان',
+        'vip_channel': 'لینک کانال VIP',
+        'membership_fee': 'مبلغ عضویت',
+        'wallet_address': 'آدرس کیف پول',
+        'network': 'شبکه انتقال'
+      };
+      
+      const fieldName = fieldNames[field] || field;
+      const confirmMsg = `✅ *${fieldName} بروزرسانی شد*\n━━━━━━━━━━━━━━━━\n*مقدار جدید:* ${text}\n*زمان بروزرسانی:* ${moment().format('jYYYY/jM/jD HH:mm')}\n━━━━━━━━━━━━━━━━`;
+      
+      bot.sendMessage(id, confirmMsg, { parse_mode: 'Markdown' });
       delete states[id];
-      bot.sendMessage(id, '⚙️ تنظیمات کانال‌ها و VIP:', channelsKeyboard());
+      bot.sendMessage(id, '⚙️ *تنظیمات کانال‌ها و VIP:*', { parse_mode: 'Markdown', ...channelsKeyboard() });
       states[id] = { type: 'admin_channels_menu' };
       return;
     }
@@ -732,28 +830,55 @@ async function handleState(id, text, msg) {
       if (text === '📊 آمار کاربران') {
         const { rows: total } = await pool.query('SELECT COUNT(*) FROM users');
         const { rows: vipCount } = await pool.query('SELECT COUNT(*) FROM vips WHERE approved AND end_date > NOW()');
-        bot.sendMessage(id, `📊 آمار کلی:\nکل کاربران: ${total[0].count}\nکاربران VIP فعال: ${vipCount[0].count}`);
+        const stats = `📊 *آمار کلی کاربران*\n━━━━━━━━━━━━━━━━\n👥 *کل کاربران:* ${total[0].count}\n💎 *کاربران VIP فعال:* ${vipCount[0].count}\n📈 *نسبت VIP:* ${((vipCount[0].count / total[0].count) * 100 || 0).toFixed(1)}%\n━━━━━━━━━━━━━━━━`;
+        bot.sendMessage(id, stats, { parse_mode: 'Markdown' });
       } else if (text === '👤 لیست کاربران عادی') {
         const { rows } = await pool.query(`
-          SELECT u.telegram_id, u.name, u.username FROM users u 
-          LEFT JOIN vips v ON u.telegram_id = v.telegram_id WHERE v.telegram_id IS NULL LIMIT 20
+          SELECT u.telegram_id, u.name, u.username, u.registration_date 
+          FROM users u 
+          LEFT JOIN vips v ON u.telegram_id = v.telegram_id 
+          WHERE v.telegram_id IS NULL 
+          ORDER BY u.registration_date DESC 
+          LIMIT 20
         `);
-        let list = '👤 کاربران عادی (حداکثر ۲۰):\n';
-        rows.forEach(r => list += `/user_${r.telegram_id} - ${r.name || 'نامشخص'} (@${r.username || 'ندارد'})\n`);
-        bot.sendMessage(id, list || 'هیچ کاربری یافت نشد.');
+        
+        const users = rows.map(r => ({
+          telegram_id: r.telegram_id,
+          name: r.name,
+          username: r.username,
+          registration_date: r.registration_date,
+          vip: false
+        }));
+        
+        const list = formatUserList(users, 'کاربران عادی (۲۰ کاربر اخیر)', 'normal');
+        bot.sendMessage(id, list, { parse_mode: 'Markdown' });
       } else if (text === '💎 لیست کاربران VIP') {
         const { rows } = await pool.query(`
-          SELECT u.telegram_id, u.name, u.username, v.end_date FROM users u 
-          JOIN vips v ON u.telegram_id = v.telegram_id WHERE v.approved AND v.end_date > NOW() LIMIT 20
+          SELECT u.telegram_id, u.name, u.username, u.registration_date, v.end_date 
+          FROM users u 
+          JOIN vips v ON u.telegram_id = v.telegram_id 
+          WHERE v.approved AND v.end_date > NOW() 
+          ORDER BY v.end_date DESC 
+          LIMIT 20
         `);
-        let list = '💎 کاربران VIP (حداکثر ۲۰):\n';
-        rows.forEach(r => list += `/user_${r.telegram_id} - ${r.name || 'نامشخص'} (@${r.username || 'ندارد'}) - پایان: ${moment(r.end_date).format('jYYYY/jM/jD')}\n`);
-        bot.sendMessage(id, list || 'هیچ کاربری یافت نشد.');
+        
+        const users = rows.map(r => ({
+          telegram_id: r.telegram_id,
+          name: r.name,
+          username: r.username,
+          registration_date: r.registration_date,
+          vip: true,
+          vip_end: r.end_date
+        }));
+        
+        const list = formatUserList(users, 'کاربران VIP فعال (۲۰ کاربر اخیر)', 'vip');
+        bot.sendMessage(id, list, { parse_mode: 'Markdown' });
       } else if (text === '📜 بایگانی چت کاربران') {
-        const { rows } = await pool.query('SELECT telegram_id, name FROM users ORDER BY registration_date DESC LIMIT 5');
-        let hint = '📜 برای مشاهده بایگانی چت یک کاربر، دستور زیر را بفرستید:\n/archive_user_[ID]\n\nکاربران اخیر:\n';
-        rows.forEach(r => hint += `/archive_user_${r.telegram_id} - ${r.name || 'نامشخص'}\n`);
-        bot.sendMessage(id, hint || 'هیچ کاربری یافت نشد.');
+        const { rows } = await pool.query('SELECT telegram_id, name, username FROM users ORDER BY registration_date DESC LIMIT 5');
+        let hint = `📜 *بایگانی چت کاربران*\n━━━━━━━━━━━━━━━━\nبرای مشاهده بایگانی چت یک کاربر، دستور زیر را بفرستید:\n\`/archive_user_[ID]\`\n\n*کاربران اخیر:*\n`;
+        rows.forEach(r => hint += `\`/archive_user_${r.telegram_id}\` - ${r.name || 'نامشخص'} (@${r.username || 'ندارد'})\n`);
+        hint += `━━━━━━━━━━━━━━━━`;
+        bot.sendMessage(id, hint, { parse_mode: 'Markdown' });
       } else if (text === '↩️ بازگشت به پنل ادمین') {
         delete states[id];
         bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
@@ -764,19 +889,20 @@ async function handleState(id, text, msg) {
     // مدیریت پیام‌رسانی
     if (state.type === 'admin_broadcast_menu') {
       if (text === '📢 پیام همگانی (همه)') {
-        bot.sendMessage(id, 'پیام خود را بنویسید یا رسانه ارسال کنید.', backKeyboard());
+        bot.sendMessage(id, '📤 *پیام خود را بنویسید یا رسانه ارسال کنید.*', { parse_mode: 'Markdown', ...backKeyboard() });
         states[id] = { type: 'broadcast', target: 'all' };
       } else if (text === '📩 کاربران عادی') {
-        bot.sendMessage(id, 'پیام خود را بنویسید یا رسانه ارسال کنید.', backKeyboard());
+        bot.sendMessage(id, '📤 *پیام خود را بنویسید یا رسانه ارسال کنید.*', { parse_mode: 'Markdown', ...backKeyboard() });
         states[id] = { type: 'broadcast', target: 'normal' };
       } else if (text === '💌 کاربران VIP') {
-        bot.sendMessage(id, 'پیام خود را بنویسید یا رسانه ارسال کنید.', backKeyboard());
+        bot.sendMessage(id, '📤 *پیام خود را بنویسید یا رسانه ارسال کنید.*', { parse_mode: 'Markdown', ...backKeyboard() });
         states[id] = { type: 'broadcast', target: 'vip' };
       } else if (text === '📂 بایگانی') {
         const { rows } = await pool.query('SELECT id, target_type, timestamp FROM broadcast_messages ORDER BY timestamp DESC LIMIT 10');
-        let list = '📂 بایگانی پیام‌ها (حداکثر ۱۰):\n';
-        rows.forEach(r => list += `/view_${r.id} - هدف: ${r.target_type}, تاریخ: ${moment(r.timestamp).format('jYYYY/jM/jD HH:mm')}\n`);
-        bot.sendMessage(id, list || 'هیچ پیامی یافت نشد.');
+        let list = '📂 *بایگانی پیام‌ها (حداکثر ۱۰):*\n━━━━━━━━━━━━━━━━\n';
+        rows.forEach(r => list += `\`/view_${r.id}\` - هدف: ${r.target_type}, تاریخ: ${moment(r.timestamp).format('jYYYY/jM/jD HH:mm')}\n`);
+        list += `━━━━━━━━━━━━━━━━`;
+        bot.sendMessage(id, list, { parse_mode: 'Markdown' });
       } else if (text === '↩️ بازگشت به پنل ادمین') {
         delete states[id];
         bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
@@ -802,7 +928,7 @@ async function handleState(id, text, msg) {
       const { rows } = await pool.query(query);
       const userIds = rows.map(r => r.telegram_id);
       
-      bot.sendMessage(id, `📤 در حال ارسال به ${userIds.length} کاربر...`);
+      bot.sendMessage(id, `📤 *در حال ارسال به ${userIds.length} کاربر...*`, { parse_mode: 'Markdown' });
       const { success, failed } = await sendBroadcast(userIds, msg);
       
       const media_type = msg.photo ? 'photo' : msg.video ? 'video' : msg.document ? 'document' : msg.animation ? 'animation' : 'text';
@@ -813,7 +939,9 @@ async function handleState(id, text, msg) {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `, [ADMIN_CHAT_ID, state.target, text, media_type, media_file_id, msg.caption || null, success, failed]);
       
-      bot.sendMessage(id, `📊 گزارش ارسال:\nموفق: ${success}\nناموفق: ${failed}\nکل: ${userIds.length}`);
+      const report = `📊 *گزارش ارسال*\n━━━━━━━━━━━━━━━━\n✅ *موفق:* ${success}\n❌ *ناموفق:* ${failed}\n📊 *کل:* ${userIds.length}\n🎯 *هدف:* ${state.target === 'all' ? 'همه' : state.target === 'vip' ? 'VIP' : 'عادی'}\n📅 *زمان:* ${moment().format('jYYYY/jM/jD HH:mm')}\n━━━━━━━━━━━━━━━━`;
+      
+      bot.sendMessage(id, report, { parse_mode: 'Markdown' });
       delete states[id];
       return;
     }
@@ -834,7 +962,21 @@ async function handleState(id, text, msg) {
       if (fieldMap[text]) {
         const { rows } = await pool.query(`SELECT ${fieldMap[text]} FROM users WHERE telegram_id = $1`, [id]);
         const current = rows[0][fieldMap[text]] || 'تنظیم نشده';
-        bot.sendMessage(id, `مقدار فعلی: ${current}\nمقدار جدید را وارد کنید یا /cancel برای لغو.`);
+        const fieldNames = {
+          'name': 'نام',
+          'age': 'سن',
+          'city': 'شهر',
+          'region': 'منطقه',
+          'gender': 'جنسیت',
+          'job': 'شغل',
+          'goal': 'هدف',
+          'phone': 'شماره تماس'
+        };
+        
+        const fieldName = fieldNames[fieldMap[text]];
+        const message = `✏️ *ویرایش ${fieldName}*\n━━━━━━━━━━━━━━━━\n*مقدار فعلی:* ${current}\n━━━━━━━━━━━━━━━━\nمقدار جدید را وارد کنید یا /cancel برای لغو.`;
+        
+        bot.sendMessage(id, message, { parse_mode: 'Markdown' });
         states[id] = { type: `edit_${fieldMap[text]}` };
       } else if (text === '↩️ بازگشت به منو اصلی') {
         delete states[id];
@@ -852,11 +994,33 @@ async function handleState(id, text, msg) {
       }
       const field = state.type.replace('edit_', '');
       const value = field === 'age' ? parseInt(text) || null : text.trim() || null;
+      
       await pool.query(`UPDATE users SET ${field} = $1 WHERE telegram_id = $2`, [value, id]);
+      
+      // دریافت اطلاعات به‌روز شده کاربر
+      const { rows: userRows } = await pool.query(
+        'SELECT * FROM users WHERE telegram_id = $1',
+        [id]
+      );
+      
+      if (userRows.length > 0) {
+        const user = userRows[0];
+        const { rows: usernameRow } = await pool.query(
+          'SELECT username FROM users WHERE telegram_id = $1',
+          [id]
+        );
+        const username = usernameRow[0]?.username;
+        
+        // ارسال گزارش ویرایش به ادمین
+        const report = formatUserReport(user, 'ویرایش', username);
+        await bot.sendMessage(ADMIN_CHAT_ID, report, { parse_mode: 'Markdown' });
+      }
+      
       bot.sendMessage(id, '✅ ویرایش شد.', editKeyboard());
       states[id] = { type: 'edit_menu' };
       await addScore(id, 5);
-      bot.sendMessage(ADMIN_CHAT_ID, `✏️ کاربر ${id} اطلاعات خود را ویرایش کرد.`);
+      
+      delete states[id];
       return;
     }
     
@@ -886,9 +1050,28 @@ async function handleState(id, text, msg) {
           ON CONFLICT (telegram_id) DO UPDATE SET name=$2, age=$3, city=$4, region=$5, gender=$6, job=$7, goal=$8, phone=$9
         `, [id, state.data.name, ageVal, state.data.city, state.data.region, state.data.gender, state.data.job, state.data.goal, state.data.phone]);
         
-        bot.sendMessage(id, '✅ ثبت‌نام با موفقیت انجام شد! 🎉', mainKeyboard(true, admin));
+        // دریافت اطلاعات کامل کاربر برای گزارش
+        const { rows: userRows } = await pool.query(
+          'SELECT * FROM users WHERE telegram_id = $1',
+          [id]
+        );
+        
+        if (userRows.length > 0) {
+          const user = userRows[0];
+          const { rows: usernameRow } = await pool.query(
+            'SELECT username FROM users WHERE telegram_id = $1',
+            [id]
+          );
+          const username = usernameRow[0]?.username;
+          
+          // ارسال گزارش زیبا به ادمین
+          const report = formatUserReport(user, 'ثبت‌نام', username);
+          await bot.sendMessage(ADMIN_CHAT_ID, report, { parse_mode: 'Markdown' });
+        }
+        
+        bot.sendMessage(id, '✅ *ثبت‌نام با موفقیت انجام شد!* 🎉', { parse_mode: 'Markdown', ...mainKeyboard(true, admin) });
         await addScore(id, 20);
-        bot.sendMessage(ADMIN_CHAT_ID, `🔔 کاربر جدید ثبت‌نام کرد: ${id}`);
+        
         delete states[id];
         return;
       }
@@ -912,7 +1095,9 @@ async function handleState(id, text, msg) {
     if (state.type === 'vip_receipt' && msg.photo) {
       const fileId = msg.photo[msg.photo.length - 1].file_id;
       await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
-      bot.sendMessage(ADMIN_CHAT_ID, `📸 رسید پرداخت از کاربر ${id}\n/approve_${id} یا /reject_${id}`);
+      
+      const report = `📸 *رسید پرداخت VIP*\n━━━━━━━━━━━━━━━━\n👤 *کاربر:* ${id}\n📅 *زمان:* ${moment().format('jYYYY/jM/jD HH:mm')}\n━━━━━━━━━━━━━━━━\n✅ برای تأیید: \`/approve_${id}\`\n❌ برای رد: \`/reject_${id}\``;
+      await bot.sendMessage(ADMIN_CHAT_ID, report, { parse_mode: 'Markdown' });
       
       await pool.query(
         'INSERT INTO vips (telegram_id, payment_receipt) VALUES ($1, $2) ON CONFLICT (telegram_id) DO UPDATE SET payment_receipt = $2',
@@ -920,7 +1105,7 @@ async function handleState(id, text, msg) {
       );
       
       delete states[id];
-      bot.sendMessage(id, '✅ رسید ارسال شد. منتظر تأیید ادمین باشید.', mainKeyboard(true, admin));
+      bot.sendMessage(id, '✅ *رسید ارسال شد. منتظر تأیید ادمین باشید.*', { parse_mode: 'Markdown', ...mainKeyboard(true, admin) });
       return;
     }
     
@@ -936,10 +1121,10 @@ async function handleState(id, text, msg) {
       
       const { rows } = await pool.query('SELECT name, username FROM users WHERE telegram_id = $1', [id]);
       const user = rows[0] || {};
-      const info = `📩 پیام جدید از کاربر\nنام: ${user.name || 'نامشخص'}\nID: ${id}\nیوزرنیم: ${user.username || 'ندارد'}\n/reply_${id} برای پاسخ`;
+      const info = `📩 *پیام جدید از کاربر*\n━━━━━━━━━━━━━━━━\n📛 *نام:* ${user.name || 'نامشخص'}\n🆔 *ID:* ${id}\n👤 *یوزرنیم:* @${user.username || 'ندارد'}\n━━━━━━━━━━━━━━━━\n💬 برای پاسخ: \`/reply_${id}\``;
       
-      await bot.sendMessage(ADMIN_CHAT_ID, info);
-      bot.sendMessage(id, '✅ پیام شما با موفقیت ارسال شد.', mainKeyboard(true, admin));
+      await bot.sendMessage(ADMIN_CHAT_ID, info, { parse_mode: 'Markdown' });
+      bot.sendMessage(id, '✅ *پیام شما با موفقیت ارسال شد.*', { parse_mode: 'Markdown', ...mainKeyboard(true, admin) });
       
       const fileId = msg.photo ? msg.photo[msg.photo.length - 1].file_id : msg.video?.file_id || msg.document?.file_id || msg.animation?.file_id || null;
       
@@ -966,8 +1151,9 @@ async function handleState(id, text, msg) {
       const used = usedRows[0]?.ai_questions_used || 0;
       
       if (!vip && used >= 5) {
-        bot.sendMessage(id, '⚠️ تعداد سوالات رایگان شما تمام شده است. برای سوالات نامحدود VIP شوید.', mainKeyboard(true, admin));
-        bot.sendMessage(ADMIN_CHAT_ID, `⚠️ کاربر ${id} سوالات رایگانش تمام شد.`);
+        bot.sendMessage(id, '⚠️ *تعداد سوالات رایگان شما تمام شده است. برای سوالات نامحدود VIP شوید.*', { parse_mode: 'Markdown', ...mainKeyboard(true, admin) });
+        const alert = `⚠️ *کاربر سوالات رایگانش تمام شد*\n━━━━━━━━━━━━━━━━\n👤 *کاربر:* ${id}\n📛 *نام:* ${usedRows[0]?.name || 'نامشخص'}\n🤖 *سوالات استفاده شده:* ${used}\n━━━━━━━━━━━━━━━━`;
+        bot.sendMessage(ADMIN_CHAT_ID, alert, { parse_mode: 'Markdown' });
         delete states[id];
         return;
       }
@@ -1015,12 +1201,12 @@ async function handleState(id, text, msg) {
         await pool.query('DROP TABLE IF EXISTS settings CASCADE');
         
         await createTables();
-        bot.sendMessage(id, '🔄 دیتابیس ریست شد.');
+        bot.sendMessage(id, '🔄 *دیتابیس ریست شد.*', { parse_mode: 'Markdown' });
       } else if (text === '❌ لغو') {
         bot.sendMessage(id, '❌ عملیات لغو شد.');
       }
       delete states[id];
-      bot.sendMessage(id, '🛡️ پنل ادمین', adminKeyboard());
+      bot.sendMessage(id, '🛡️ *پنل ادمین*', { parse_mode: 'Markdown', ...adminKeyboard() });
       return;
     }
     
@@ -1038,7 +1224,7 @@ async function handleState(id, text, msg) {
         [state.userId, text]
       );
       
-      bot.sendMessage(id, '✅ پاسخ ارسال شد.');
+      bot.sendMessage(id, '✅ *پاسخ ارسال شد.*', { parse_mode: 'Markdown' });
       delete states[id];
       return;
     }
@@ -1059,26 +1245,55 @@ bot.onText(/\/user_(\d+)/, async (msg, match) => {
   const { rows: vipRows } = await pool.query('SELECT * FROM vips WHERE telegram_id = $1', [uid]);
   
   if (userRows.length === 0) {
-    bot.sendMessage(msg.chat.id, 'کاربر یافت نشد.');
+    bot.sendMessage(msg.chat.id, '❌ کاربر یافت نشد.');
     return;
   }
   
   const user = userRows[0];
-  let details = `جزئیات کاربر ${uid}:\nنام: ${user.name || 'نامشخص'}\nسن: ${user.age || 'نامشخص'}\nشهر: ${user.city || 'نامشخص'}\nمنطقه: ${user.region || 'نامشخص'}\nجنسیت: ${user.gender || 'نامشخص'}\nشغل: ${user.job || 'نامشخص'}\nهدف: ${user.goal || 'نامشخص'}\nشماره تماس: ${user.phone || 'نامشخص'}\nسوالات AI: ${user.ai_questions_used || 0}\nامتیاز: ${user.score || 0}\nلِوِل: ${user.level || 1}\nثبت نام: ${moment(user.registration_date).format('jYYYY/jM/jD HH:mm')}`;
+  const isVip = vipRows.length > 0;
+  const vip = vipRows[0];
   
-  if (vipRows.length > 0) {
-    const vip = vipRows[0];
-    details += `\n\nوضعیت VIP:\nشروع: ${vip.start_date ? moment(vip.start_date).format('jYYYY/jM/jD HH:mm') : 'ندارد'}\nپایان: ${vip.end_date ? moment(vip.end_date).format('jYYYY/jM/jD HH:mm') : 'ندارد'}\nتایید شده: ${vip.approved ? 'بله' : 'خیر'}`;
+  let details = `👤 *جزئیات کاربر*\n━━━━━━━━━━━━━━━━\n`;
+  details += `🆔 *آیدی:* \`${uid}\`\n`;
+  details += `👤 *نام کاربری:* @${user.username || 'ندارد'}\n`;
+  details += `📛 *نام:* ${user.name || 'نامشخص'}\n`;
+  details += `🎂 *سن:* ${user.age || 'نامشخص'}\n`;
+  details += `🏙️ *شهر:* ${user.city || 'نامشخص'}\n`;
+  details += `🌍 *منطقه:* ${user.region || 'نامشخص'}\n`;
+  details += `⚧️ *جنسیت:* ${user.gender || 'نامشخص'}\n`;
+  details += `💼 *شغل:* ${user.job || 'نامشخص'}\n`;
+  details += `🎯 *هدف:* ${user.goal || 'نامشخص'}\n`;
+  details += `📱 *شماره:* ${user.phone || 'نامشخص'}\n`;
+  details += `🤖 *سوالات AI:* ${user.ai_questions_used || 0}\n`;
+  details += `⭐ *امتیاز:* ${user.score || 0}\n`;
+  details += `📊 *لِوِل:* ${user.level || 1}\n`;
+  details += `📅 *تاریخ ثبت‌نام:* ${moment(user.registration_date).format('jYYYY/jM/jD HH:mm')}\n`;
+  
+  if (isVip) {
+    details += `\n💎 *وضعیت VIP:* ✅ فعال\n`;
+    details += `   🏁 *شروع:* ${vip.start_date ? moment(vip.start_date).format('jYYYY/jM/jD HH:mm') : 'ندارد'}\n`;
+    details += `   🏁 *پایان:* ${vip.end_date ? moment(vip.end_date).format('jYYYY/jM/jD HH:mm') : 'ندارد'}\n`;
+    details += `   ✅ *تأیید شده:* ${vip.approved ? 'بله' : 'خیر'}\n`;
+  } else {
+    details += `\n💎 *وضعیت VIP:* ❌ غیرفعال\n`;
   }
   
-  bot.sendMessage(msg.chat.id, details);
+  details += `━━━━━━━━━━━━━━━━\n`;
+  details += `📝 *دستورات مدیریت:*\n`;
+  details += `\`/reply_${uid}\` - پاسخ به کاربر\n`;
+  details += `\`/archive_user_${uid}\` - بایگانی چت\n`;
+  if (!isVip) {
+    details += `\`/approve_${uid}\` - تبدیل به VIP\n`;
+  }
+  
+  bot.sendMessage(msg.chat.id, details, { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/reply_(\d+)/, async (msg, match) => {
   if (msg.chat.id !== ADMIN_CHAT_ID) return;
   const uid = match[1];
   
-  bot.sendMessage(msg.chat.id, `پاسخ به کاربر ${uid} را بنویسید (برای لغو /cancel):`);
+  bot.sendMessage(msg.chat.id, `💬 *پاسخ به کاربر ${uid}*\n━━━━━━━━━━━━━━━━\nپاسخ خود را بنویسید (برای لغو /cancel):`, { parse_mode: 'Markdown' });
   states[msg.chat.id] = { type: 'reply_to_user', userId: uid };
 });
 
@@ -1095,13 +1310,14 @@ bot.onText(/\/archive_user_(\d+)/, async (msg, match) => {
     [uid]
   );
   
-  let archive = `📜 بایگانی کاربر ${uid} (حداکثر ۵۰ مورد اخیر):\n\nچت با کانیا:\n`;
-  msgs.forEach(m => archive += `${m.is_from_user ? 'کاربر' : 'ادمین'} (${moment(m.timestamp).format('jYYYY/jM/jD HH:mm')}): ${m.message_text || '[رسانه]'}\n`);
+  let archive = `📜 *بایگانی کاربر ${uid}*\n━━━━━━━━━━━━━━━━\n`;
+  archive += `💬 *چت با کانیا:*\n`;
+  msgs.forEach(m => archive += `${m.is_from_user ? '👤 کاربر' : '🛡️ ادمین'} (${moment(m.timestamp).format('jYYYY/jM/jD HH:mm')}): ${m.message_text || '[رسانه]'}\n`);
   
-  archive += `\nچت با هوش مصنوعی:\n`;
-  ais.forEach(a => archive += `سوال (${moment(a.timestamp).format('jYYYY/jM/jD HH:mm')}): ${a.user_question}\nپاسخ: ${a.ai_response}\n---\n`);
+  archive += `\n🤖 *چت با هوش مصنوعی:*\n`;
+  ais.forEach(a => archive += `❓ *سوال* (${moment(a.timestamp).format('jYYYY/jM/jD HH:mm')}): ${a.user_question}\n🤖 *پاسخ:* ${a.ai_response}\n━━━━━━━━━━━━━━━━\n`);
   
-  bot.sendMessage(msg.chat.id, archive || 'هیچ چتی یافت نشد.');
+  bot.sendMessage(msg.chat.id, archive || '📭 هیچ چتی یافت نشد.', { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/approve_(\d+)/, async (msg, match) => {
@@ -1115,12 +1331,13 @@ bot.onText(/\/approve_(\d+)/, async (msg, match) => {
   );
   
   const { rows } = await pool.query('SELECT vip_channel FROM settings');
-  bot.sendMessage(
-    uid,
-    `🎉 عضویت VIP شما تأیید شد!\nمعتبر تا: ${moment(endDate).format('jYYYY/jM/jD')}\nکانال VIP: ${rows[0]?.vip_channel || 'تنظیم نشده'}`
-  );
+  const vipMessage = `🎉 *عضویت VIP شما تأیید شد!*\n━━━━━━━━━━━━━━━━\n📅 *معتبر تا:* ${moment(endDate).format('jYYYY/jM/jD')}\n📢 *کانال VIP:* ${rows[0]?.vip_channel || 'تنظیم نشده'}\n━━━━━━━━━━━━━━━━\nممنون از اعتماد شما! 💎`;
   
-  bot.sendMessage(ADMIN_CHAT_ID, `✅ کاربر ${uid} به VIP تبدیل شد.`);
+  bot.sendMessage(uid, vipMessage, { parse_mode: 'Markdown' });
+  
+  const approveReport = `✅ *کاربر به VIP تبدیل شد*\n━━━━━━━━━━━━━━━━\n👤 *کاربر:* ${uid}\n📅 *تأیید در:* ${moment().format('jYYYY/jM/jD HH:mm')}\n📅 *پایان عضویت:* ${moment(endDate).format('jYYYY/jM/jD HH:mm')}\n━━━━━━━━━━━━━━━━`;
+  bot.sendMessage(ADMIN_CHAT_ID, approveReport, { parse_mode: 'Markdown' });
+  
   logActivity(ADMIN_CHAT_ID, 'تأیید VIP', `کاربر ${uid}`);
 });
 
@@ -1129,8 +1346,13 @@ bot.onText(/\/reject_(\d+)/, async (msg, match) => {
   const uid = parseInt(match[1]);
   
   await pool.query('UPDATE vips SET approved = FALSE WHERE telegram_id = $1', [uid]);
-  bot.sendMessage(uid, '❌ رسید پرداخت شما تأیید نشد. لطفاً دوباره تلاش کنید.');
-  bot.sendMessage(ADMIN_CHAT_ID, `❌ رسید کاربر ${uid} رد شد.`);
+  
+  const rejectMessage = `❌ *رسید پرداخت شما تأیید نشد.*\n━━━━━━━━━━━━━━━━\nلطفاً اطلاعات واریز را بررسی کرده و دوباره تلاش کنید.\nدر صورت مشکل با پشتیبانی تماس بگیرید.\n━━━━━━━━━━━━━━━━`;
+  bot.sendMessage(uid, rejectMessage, { parse_mode: 'Markdown' });
+  
+  const rejectReport = `❌ *رسید کاربر رد شد*\n━━━━━━━━━━━━━━━━\n👤 *کاربر:* ${uid}\n📅 *زمان رد:* ${moment().format('jYYYY/jM/jD HH:mm')}\n━━━━━━━━━━━━━━━━`;
+  bot.sendMessage(ADMIN_CHAT_ID, rejectReport, { parse_mode: 'Markdown' });
+  
   logActivity(ADMIN_CHAT_ID, 'رد VIP', `کاربر ${uid}`);
 });
 
@@ -1140,30 +1362,30 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
   
   const { rows } = await pool.query('SELECT * FROM broadcast_messages WHERE id = $1', [bid]);
   if (!rows.length) {
-    bot.sendMessage(msg.chat.id, 'پیام یافت نشد.');
+    bot.sendMessage(msg.chat.id, '📭 پیام یافت نشد.');
     return;
   }
   
   const row = rows[0];
   const date = moment(row.timestamp).format('jYYYY/jM/jD HH:mm');
   const target = row.target_type === 'all' ? 'همه' : row.target_type === 'vip' ? 'VIP' : 'عادی';
-  const caption = `📋 شناسه: ${row.id}\nهدف: ${target}\nتاریخ: ${date}\nموفق: ${row.sent_count} | ناموفق: ${row.failed_count}`;
+  const caption = `📋 *جزئیات پیام همگانی*\n━━━━━━━━━━━━━━━━\n🆔 *شناسه:* ${row.id}\n🎯 *هدف:* ${target}\n📅 *تاریخ:* ${date}\n✅ *موفق:* ${row.sent_count} | ❌ *ناموفق:* ${row.failed_count}\n━━━━━━━━━━━━━━━━`;
   
   try {
     if (row.media_type === 'photo') {
-      await bot.sendPhoto(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text });
+      await bot.sendPhoto(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text, parse_mode: 'Markdown' });
     } else if (row.media_type === 'video') {
-      await bot.sendVideo(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text });
+      await bot.sendVideo(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text, parse_mode: 'Markdown' });
     } else if (row.media_type === 'document') {
-      await bot.sendDocument(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text });
+      await bot.sendDocument(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text, parse_mode: 'Markdown' });
     } else if (row.media_type === 'animation') {
-      await bot.sendAnimation(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text });
+      await bot.sendAnimation(msg.chat.id, row.media_file_id, { caption: row.caption || row.message_text, parse_mode: 'Markdown' });
     } else {
       await bot.sendMessage(msg.chat.id, row.message_text || '(بدون متن)');
     }
-    bot.sendMessage(msg.chat.id, caption);
+    bot.sendMessage(msg.chat.id, caption, { parse_mode: 'Markdown' });
   } catch (err) {
-    bot.sendMessage(msg.chat.id, 'خطا در نمایش رسانه.');
+    bot.sendMessage(msg.chat.id, '❌ خطا در نمایش رسانه.');
   }
 });
 
