@@ -2472,13 +2472,21 @@ bot.on('error', (err) => console.error('❌ خطای Bot:', err.message));
 
 // -------------------- راه‌اندازی سرور --------------------
 app.listen(PORT, async () => {
-  await createTables();
-  await verifyAndFixDatabase();
+  console.log('🚀 راه‌اندازی KaniaChatBot...');
   
-  console.log(`🌐 پورت: ${PORT}`);
-  console.log(`🤖 توکن بات: ${BOT_TOKEN ? '✅ تنظیم شده' : '❌ تنظیم نشده!'}`);
-  console.log(`👑 ادمین: ${ADMIN_CHAT_ID}`);
-  console.log(`🔗 WEBHOOK_URL: ${WEBHOOK_URL ? '✅ تنظیم شده' : '❌ تنظیم نشده'}`);
+  try {
+    // فقط createTables رو صدا بزن
+    const tablesCreated = await createTables();
+    
+    if (!tablesCreated) {
+      console.error('❌ ایجاد جدول‌ها ناموفق بود.');
+      process.exit(1);
+    }
+    
+    console.log(`🌐 پورت: ${PORT}`);
+    console.log(`🤖 توکن: ${BOT_TOKEN ? '✅' : '❌'}`);
+    console.log(`👑 ادمین: ${ADMIN_CHAT_ID}`);
+    console.log(`🔗 وب‌هوک: ${WEBHOOK_URL ? '✅' : '❌'}`);
   
   // اولویت با WEBHOOK_URL
   if (WEBHOOK_URL && WEBHOOK_URL.trim() !== '') {
