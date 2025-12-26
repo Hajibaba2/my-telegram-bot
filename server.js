@@ -14,13 +14,13 @@ const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID);
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
-// چک اولیه
+// چک اولیه متغیرها
 if (!BOT_TOKEN || isNaN(ADMIN_CHAT_ID) || !WEBHOOK_URL) {
   console.error('خطا انتقادی: BOT_TOKEN، ADMIN_CHAT_ID یا WEBHOOK_URL تنظیم نشده است!');
   process.exit(1);
 }
 
-// Pool دیتابیس
+// تنظیمات Pool دیتابیس
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
@@ -33,7 +33,7 @@ const bot = new TelegramBot(BOT_TOKEN);
 let openai = null;
 const states = {};
 
-// ساخت کیبورد
+// تابع ساخت کیبورد
 function createReplyKeyboard(keyboardArray, options = {}) {
   return {
     reply_markup: {
@@ -45,7 +45,7 @@ function createReplyKeyboard(keyboardArray, options = {}) {
   };
 }
 
-// ساخت جدول‌ها — با IF NOT EXISTS برای constraintها
+// ساخت جدول‌ها — با ignore خطای already exists
 async function createTables() {
   try {
     await pool.query(`
@@ -68,7 +68,7 @@ async function createTables() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS vips (
         id SERIAL PRIMARY KEY,
-        telegram_id BIGINT,
+        telegram_id BIGINT UNIQUE,
         start_date TIMESTAMP,
         end_date TIMESTAMP,
         payment_receipt TEXT,
@@ -76,28 +76,17 @@ async function createTables() {
       );
     `);
 
-    // UNIQUE constraint با IF NOT EXISTS
-    await pool.query(`
-      DO \[ BEGIN
-        IF NOT EXISTS (
-          SELECT 1 FROM pg_constraint WHERE conname = 'vips_telegram_id_key'
-        ) THEN
-          ALTER TABLE vips ADD CONSTRAINT vips_telegram_id_key UNIQUE (telegram_id);
-        END IF;
-      END \];
-    `);
-
-    // Foreign Key با IF NOT EXISTS
-    await pool.query(`
-      DO \[ BEGIN
-        IF NOT EXISTS (
-          SELECT 1 FROM pg_constraint WHERE conname = 'vips_telegram_id_fkey'
-        ) THEN
-          ALTER TABLE vips ADD CONSTRAINT vips_telegram_id_fkey
-          FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE;
-        END IF;
-      END \];
-    `);
+    // Foreign Key را فقط اگر لازم باشد اضافه کن (ignore if already exists)
+    try {
+      await pool.query(`
+        ALTER TABLE vips ADD CONSTRAINT vips_telegram_id_fkey
+        FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+      `);
+    } catch (err) {
+      if (!err.message.includes('already exists')) {
+        console.error('خطا در اضافه کردن Foreign Key:', err.message);
+      }
+    }
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS settings (
@@ -216,7 +205,7 @@ app.listen(PORT, async () => {
   console.log('KaniaChatBot کاملاً آماده است! 🚀');
 });
 
-// Keep-Alive
+// Keep-Alive هر ۵ دقیقه
 const keepAliveUrl = WEBHOOK_URL.replace(`/bot${BOT_TOKEN}`, '') || WEBHOOK_URL;
 if (keepAliveUrl.includes('railway.app')) {
   setInterval(() => {
@@ -614,10 +603,8 @@ async function handleState(id, text, msg) {
     await bot.forwardMessage(ADMIN_CHAT_ID, id, msg.message_id);
     bot.sendMessage(ADMIN_CHAT_ID, `📸 رسید پرداخت از کاربر \( {id}\n/approve_ \){id} یا /reject_${id}`);
     await pool.query(`
-      INSERT INTO vips (telegram_id, payment_receipt)
-      VALUES ($1, $2)
-      ON CONFLICT ON CONSTRAINT vips_telegram_id_key
-      DO UPDATE SET payment_receipt = $2
+      INSERT INTO vips (telegram_id, payment_receipt) VALUES ($1, $2)
+      ON CONFLICT (telegram_id) DO UPDATE SET payment_receipt = $2
     `, [id, fileId]);
     delete states[id];
     bot.sendMessage(id, '✅ رسید ارسال شد. منتظر تأیید ادمین باشید.', mainKeyboard(await isRegistered(id), admin));
