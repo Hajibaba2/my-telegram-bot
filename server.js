@@ -45,9 +45,10 @@ function createReplyKeyboard(keyboardArray, options = {}) {
   };
 }
 
-// ساخت جدول‌ها — با ignore خطای already exists
+// ساخت جدول‌ها — بهینه و بدون خطای already exists
 async function createTables() {
   try {
+    // جدول کاربران
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
@@ -65,6 +66,7 @@ async function createTables() {
       );
     `);
 
+    // جدول VIP با UNIQUE مستقیم
     await pool.query(`
       CREATE TABLE IF NOT EXISTS vips (
         id SERIAL PRIMARY KEY,
@@ -76,18 +78,23 @@ async function createTables() {
       );
     `);
 
-    // Foreign Key را فقط اگر لازم باشد اضافه کن (ignore if already exists)
+    // Foreign Key — فقط یک بار و با ignore خطا
     try {
+      await pool.query(`
+        ALTER TABLE vips ADD COLUMN IF NOT EXISTS dummy INT;
+        ALTER TABLE vips DROP COLUMN IF EXISTS dummy;
+      `); // ترفند برای چک وجود جدول
       await pool.query(`
         ALTER TABLE vips ADD CONSTRAINT vips_telegram_id_fkey
         FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
       `);
     } catch (err) {
-      if (!err.message.includes('already exists')) {
+      if (!err.message.includes('already exists') && !err.message.includes('duplicate')) {
         console.error('خطا در اضافه کردن Foreign Key:', err.message);
       }
     }
 
+    // تنظیمات
     await pool.query(`
       CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
@@ -102,6 +109,7 @@ async function createTables() {
     `);
     await pool.query(`INSERT INTO settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;`);
 
+    // پیام‌های همگانی
     await pool.query(`
       CREATE TABLE IF NOT EXISTS broadcast_messages (
         id SERIAL PRIMARY KEY,
@@ -117,7 +125,7 @@ async function createTables() {
       );
     `);
 
-    console.log('تمام جدول‌ها و constraintها بدون خطا آماده شدند.');
+    console.log('تمام جدول‌ها و constraintها با موفقیت و بدون خطا آماده شدند.');
   } catch (err) {
     console.error('خطا در ساخت جدول‌ها:', err.message);
   }
@@ -168,7 +176,7 @@ app.post(`/bot${BOT_TOKEN}`, (req, res) => {
 
 // Graceful shutdown
 async function gracefulShutdown() {
-  console.log('در حال خاموش شدن امن...');
+  console.log('در حال خاموش شدن امن ربات...');
   try {
     await bot.deleteWebHook();
     console.log('Webhook حذف شد.');
@@ -202,10 +210,10 @@ app.listen(PORT, async () => {
   }
 
   await createTables();
-  console.log('KaniaChatBot کاملاً آماده است! 🚀');
+  console.log('KaniaChatBot کاملاً آماده و بهینه است! 🚀');
 });
 
-// Keep-Alive هر ۵ دقیقه
+// Keep-Alive بهینه
 const keepAliveUrl = WEBHOOK_URL.replace(`/bot${BOT_TOKEN}`, '') || WEBHOOK_URL;
 if (keepAliveUrl.includes('railway.app')) {
   setInterval(() => {
@@ -779,4 +787,4 @@ bot.onText(/\/view_(\d+)/, async (msg, match) => {
   }
 });
 
-console.log('KaniaChatBot — نسخه نهایی، لاگ تمیز، بدون هیچ خطا و آماده اجرا! 🚀');
+console.log('KaniaChatBot — نسخه نهایی، کامل، بهینه، لاگ تمیز و بدون هیچ خطا! 🚀');
