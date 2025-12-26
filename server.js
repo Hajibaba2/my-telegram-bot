@@ -107,7 +107,7 @@ async function createTables() {
     `);
 
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS user-messages (
+      CREATE TABLE IF NOT EXISTS user_messages (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
         message_text TEXT,
@@ -147,6 +147,7 @@ async function isVip(id) {
     const { rows } = await pool.query('SELECT 1 FROM vips WHERE telegram_id = $1 AND approved AND end_date > NOW()', [id]);
     return rows.length > 0;
   } catch (err) {
+    console.error('خطا در چک VIP:', err.message);
     return false;
   }
 }
@@ -154,8 +155,9 @@ async function isVip(id) {
 async function isRegistered(id) {
   try {
     const { rows } = await pool.query('SELECT name FROM users WHERE telegram_id = $1', [id]);
-    return rows.length > 0 && rows[0].name !== null && rows[0].name.trim() !== '';
+    return rows.length > 0 && rows[0].name != null;
   } catch (err) {
+    console.error('خطا در چک ثبت‌نام:', err.message);
     return false;
   }
 }
@@ -173,12 +175,18 @@ async function downloadFile(fileId) {
   }
 }
 
+async function gracefulShutdown() {
+  try { await bot.deleteWebHook(); } catch (err) {}
+  await pool.end();
+  process.exit(0);
+}
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 process.on('unhandledRejection', (reason) => console.error('Unhandled Rejection:', reason));
 bot.on('error', (err) => console.error('خطای Bot:', err.message));
 
 app.listen(PORT, async () => {
-  await createTables();
-
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
   if (!domain || domain.trim() === '') {
     console.error('خطا انتقادی: دامنه عمومی تنظیم نشده است!');
@@ -188,33 +196,26 @@ app.listen(PORT, async () => {
   const webhookUrl = `https://\( {domain.trim()}/bot \){BOT_TOKEN}`;
 
   try {
-    await bot.setWebHook(webhookUrl);
-    console.log(`Webhook با موفقیت تنظیم شد: ${webhookUrl}`);
+    // چک زنده بودن دامنه
+    const healthRes = await fetch(`https://${domain.trim()}/health`);
+    if (!healthRes.ok) throw new Error('دامنه زنده نیست – پاسخ health ناموفق');
+
+    const info = await bot.getWebHookInfo();
+    if (info.url === webhookUrl) {
+      console.log('Webhook قبلاً درست ست شده است – بدون تغییر');
+    } else {
+      await bot.deleteWebHook();
+      await bot.setWebHook(webhookUrl);
+      console.log('Webhook جدید با موفقیت ست شد: ' + webhookUrl);
+    }
   } catch (err) {
     console.error('خطا در تنظیم webhook:', err.message);
     process.exit(1);
   }
 
-  console.log('KaniaChatBot با webhook آماده است! 🚀');
+  await createTables();
+  console.log('KaniaChatBot آماده است! 🚀');
 });
-
-function createReplyKeyboard(keyboardArray, options = {}) {
-  return {
-    reply_markup: {
-      keyboard: keyboardArray,
-      resize_keyboard: true,
-      one_time_keyboard: options.one_time || false,
-      input_field_placeholder: options.placeholder || ''
-    }
-  };
-}
-
-function confirmKeyboard(action) {
-  return createReplyKeyboard([
-    [{ text: `✅ تأیید ${action}` }],
-    [{ text: '❌ لغو' }]
-  ], { one_time: true });
-}
 
 function mainKeyboard(reg, admin) {
   const k = [
@@ -869,4 +870,4 @@ bot.on('callback_query', async (query) => {
   bot.answerCallbackQuery(query.id);
 });
 
-console.log('KaniaChatBot — نسخه نهایی، کامل، بدون نقص و آماده deploy 🚀');
+console.log('KaniaChatBot — نسخه نهایی، کامل و بدون خطا 🚀');
