@@ -2046,13 +2046,78 @@ bot.on('polling_error', (err) => {
   console.error('❌ خطای Polling:', err.message, err.stack);
 });
 
+// قبل از startServer() این کد را اضافه کنید:
+process.on('SIGTERM', () => {
+  console.log('📡 دریافت SIGTERM - خاموش کردن تمیز...');
+  gracefulShutdown().finally(() => {
+    console.log('✅ خاموش‌سازی کامل شد');
+    process.exit(0);
+  });
+});
+
+// از Railway متغیرهای محیطی استفاده کنید
+const PORT = process.env.PORT || 3000;
+const RAILWAY_ENVIRONMENT = process.env.RAILWAY_ENVIRONMENT || 'development';
 // ==================== Server Startup ====================
-async function startServer() {
-  console.log('🚀 راه‌اندازی KaniaChatBot...');
-  console.log(`🌐 پورت: ${PORT}`);
-  console.log(`🤖 توکن: ${BOT_TOKEN ? '✅' : '❌'}`);
-  console.log(`👑 ادمین: ${ADMIN_CHAT_ID}`);
-  console.log(`🔗 وب‌هوک: ${WEBHOOK_URL ? '✅' : '❌'}`);
+// ==================== Railway Specific Configuration ====================
+const RAILWAY_PUBLIC_URL = process.env.RAILWAY_PUBLIC_URL;
+const RAILWAY_ENVIRONMENT = process.env.RAILWAY_ENVIRONMENT || 'development';
+
+// Keep-alive endpoint
+app.get('/keep-alive', (req, res) => {
+  res.json({ 
+    status: 'alive', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage()
+  });
+});
+
+// Railway health check endpoint
+app.get('/railway-health', async (req, res) => {
+  try {
+    // بررسی اتصال دیتابیس
+    await pool.query('SELECT 1');
+    
+    // بررسی وضعیت ربات
+    const botInfo = await bot.getMe();
+    
+    res.json({
+      status: 'healthy',
+      service: 'KaniaChatBot',
+      bot: {
+        id: botInfo.id,
+        username: botInfo.username,
+        is_bot: botInfo.is_bot
+      },
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: RAILWAY_ENVIRONMENT
+    });
+  } catch (error) {
+    console.error('❌ Health check failed:', error.message);
+    res.status(500).json({ 
+      status: 'unhealthy', 
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ==================== Memory Management ====================
+// جلوگیری از نشت حافظه
+setInterval(() => {
+  if (global.gc) {
+    console.log('🧹 اجرای garbage collection...');
+    global.gc();
+  }
+}, 30 * 60 * 1000); // هر 30 دقیقه
+
+// ==================== Railway Startup ====================
+async function railwayStartup() {
+  console.log('🚂 Railway Startup - KaniaChatBot');
+  console.log('🗄️ بررسی دیتابیس...');
   
   try {
     // ایجاد جدول‌ها
@@ -2062,16 +2127,23 @@ async function startServer() {
       process.exit(1);
     }
     
-    console.log('🗄️ دیتابیس آماده است');
+    console.log('🎉 تمام جدول‌ها با موفقیت ایجاد/بررسی شدند');
+    console.log('📡 Setting up for Railway...');
+    console.log('📦 NODE_ENV:', process.env.NODE_ENV);
+    console.log('🏗️ RAILWAY_ENVIRONMENT:', RAILWAY_ENVIRONMENT);
+    console.log('🔗 RAILWAY_GIT_COMMIT_SHA:', process.env.RAILWAY_GIT_COMMIT_SHA);
     
-    // راه‌اندازی webhook یا polling
-    if (WEBHOOK_URL && WEBHOOK_URL.trim() !== '') {
-      const webhookUrl = WEBHOOK_URL.trim();
-      console.log(`🌍 تنظیم Webhook: ${webhookUrl}`);
+    // تنظیم webhook برای Railway
+    if (RAILWAY_PUBLIC_URL || WEBHOOK_URL) {
+      const webhookUrl = (RAILWAY_PUBLIC_URL || WEBHOOK_URL) + `/bot${BOT_TOKEN}`;
+      console.log('🌍 Webhook configured:', webhookUrl);
       
       try {
         await bot.deleteWebHook();
-        await bot.setWebHook(webhookUrl);
+        await bot.setWebHook(webhookUrl, {
+          max_connections: 100,
+          allowed_updates: ['message', 'callback_query']
+        });
         console.log('✅ Webhook تنظیم شد.');
       } catch (err) {
         console.error('❌ خطا در تنظیم webhook:', err.message);
@@ -2083,66 +2155,60 @@ async function startServer() {
       await startPolling();
     }
     
-    // شروع سرور Express
-    const startServerOnPort = (port) => {
-      return new Promise((resolve, reject) => {
-        server = app.listen(port, () => {
-          console.log(`✅ سرور Express روی پورت ${port} راه‌اندازی شد`);
-          console.log('🎉 KaniaChatBot آماده است! 🚀');
-          resolve(server);
-        });
-        
-        server.on('error', (err) => {
-          if (err.code === 'EADDRINUSE') {
-            console.error(`❌ پورت ${port} در حال استفاده است!`);
-            reject(err);
-          } else {
-            console.error('❌ خطای سرور:', err.message);
-            reject(err);
+    // راه‌اندازی سرور
+    server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ Express server listening on port ${PORT}`);
+      console.log('🎉 KaniaChatBot آماده است! 🚀');
+      
+      // ارسال نوتیفیکیشن به ادمین
+      if (ADMIN_CHAT_ID && RAILWAY_ENVIRONMENT === 'production') {
+        setTimeout(async () => {
+          try {
+            await bot.sendMessage(ADMIN_CHAT_ID, 
+              `🚀 *ربات راه‌اندازی شد!*\n\n` +
+              `📍 *محیط:* ${RAILWAY_ENVIRONMENT}\n` +
+              `🌐 *آدرس:* ${RAILWAY_PUBLIC_URL || 'localhost'}\n` +
+              `📅 *زمان:* ${new Date().toLocaleString('fa-IR')}\n\n` +
+              `✅ ربات آماده ارائه خدمات است.`,
+              { parse_mode: 'Markdown' }
+            );
+          } catch (err) {
+            console.log('⚠️ نتوانست به ادمین پیام بفرستد:', err.message);
           }
-        });
-      });
-    };
-    
-    // تلاش برای شروع سرور روی پورت اصلی یا پورت جایگزین
-    try {
-      await startServerOnPort(PORT);
-    } catch (err) {
-      if (err.code === 'EADDRINUSE') {
-        console.log('🔄 تلاش برای استفاده از پورت تصادفی...');
-        const randomPort = Math.floor(Math.random() * (65535 - 1024) + 1024);
-        try {
-          await startServerOnPort(randomPort);
-        } catch (err2) {
-          console.error('❌ خطا در راه‌اندازی سرور روی هر پورت:', err2.message);
-          process.exit(1);
-        }
-      } else {
-        console.error('❌ خطای سرور:', err.message);
-        process.exit(1);
+        }, 3000);
       }
-    }
+    });
+    
+    // مدیریت خطاهای سرور
+    server.on('error', (err) => {
+      console.error('❌ خطای سرور:', err.message);
+      if (err.code === 'EADDRINUSE') {
+        console.log('🔄 تلاش برای پورت دیگر...');
+        const altPort = parseInt(PORT) + 1;
+        server = app.listen(altPort, '0.0.0.0', () => {
+          console.log(`✅ سرور روی پورت ${altPort} راه‌اندازی شد`);
+        });
+      }
+    });
+    
+    // Keep-alive برای Railway
+    setInterval(() => {
+      console.log('💓 Keep-alive heartbeat');
+    }, 60 * 1000); // هر 1 دقیقه
     
   } catch (err) {
-    console.error('❌ خطا در راه‌اندازی سرور:', err.message, err.stack);
+    console.error('❌ خطا در راه‌اندازی Railway:', err.message, err.stack);
     process.exit(1);
   }
 }
 
-async function startPolling() {
-  try {
-    await bot.startPolling({
-      timeout: 10,
-      interval: 300,
-      autoStart: true
-    });
-    isPolling = true;
-    console.log('✅ Polling فعال شد.');
-  } catch (err) {
-    console.error('❌ خطا در شروع polling:', err.message, err.stack);
-    process.exit(1);
-  }
+// ==================== Startup Selection ====================
+if (RAILWAY_ENVIRONMENT === 'production' || RAILWAY_PUBLIC_URL) {
+  // استفاده از راه‌اندازی Railway
+  railwayStartup();
+} else {
+  // استفاده از راه‌اندازی محلی
+  startServer();
 }
-
 // شروع برنامه
 startServer();
