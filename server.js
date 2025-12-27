@@ -2472,17 +2472,7 @@ bot.on('error', (err) => console.error('❌ خطای Bot:', err.message));
 
 // -------------------- راه‌اندازی سرور --------------------
 app.listen(PORT, async () => {
-  console.log('🚀 راه‌اندازی KaniaChatBot...');
-  
-  try {
-    // فقط createTables رو صدا بزن
-    const tablesCreated = await createTables();
-    
-    if (!tablesCreated) {
-      console.error('❌ ایجاد جدول‌ها ناموفق بود.');
-      process.exit(1);
-    }
-    
+    console.log('🚀 راه‌اندازی KaniaChatBot...');
     console.log(`🌐 پورت: ${PORT}`);
     console.log(`🤖 توکن: ${BOT_TOKEN ? '✅' : '❌'}`);
     console.log(`👑 ادمین: ${ADMIN_CHAT_ID}`);
