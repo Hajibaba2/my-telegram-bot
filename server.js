@@ -2493,7 +2493,7 @@ app.listen(PORT, async () => {
     const webhookUrl = WEBHOOK_URL.trim();
     console.log(`🌍 تنظیم Webhook از متغیر محیطی: ${webhookUrl}`);
     
-    try {
+  
       // حذف Webhook قبلی
       try {
         await bot.deleteWebHook();
