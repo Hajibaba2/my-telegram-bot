@@ -2248,20 +2248,29 @@ async function railwayStartup() {
       
       // ارسال نوتیفیکیشن به ادمین
       if (ADMIN_CHAT_ID && RAILWAY_ENVIRONMENT === 'production') {
-        setTimeout(async () => {
-          try {
-            await bot.sendMessage(ADMIN_CHAT_ID, 
-              `🚀 *ربات راه‌اندازی شد!*\n\n` +
-              `📍 *محیط:* ${RAILWAY_ENVIRONMENT}\n` +
-              `🌐 *آدرس:* ${RAILWAY_PUBLIC_URL || 'localhost'}\n` +
-              `📅 *زمان:* ${new Date().toLocaleString('fa-IR')}\n\n` +
-              `✅ ربات آماده ارائه خدمات است.`,
-              { parse_mode: 'Markdown' }
-            );
-          } catch (err) {
-            console.log('⚠️ نتوانست به ادمین پیام بفرستد:', err.message);
-          }
-        }, 3000);
+ // در تابع startServer، همین تغییرات را اعمال می‌کنیم
+setTimeout(async () => {
+  try {
+    // ارسال پیام راه‌اندازی
+    await bot.sendMessage(ADMIN_CHAT_ID, 
+      `🚀 *ربات راه‌اندازی شد!*\n\n` +
+      `📍 *محیط:* Local Development\n` +
+      `🌐 *پورت:* ${PORT}\n` +
+      `📅 *زمان:* ${new Date().toLocaleString('fa-IR')}\n\n` +
+      `✅ ربات آماده ارائه خدمات است.`,
+      { parse_mode: 'Markdown' }
+    );
+    
+    // ارسال منوی اصلی به ادمین
+    await bot.sendMessage(ADMIN_CHAT_ID,
+      '🌟 *به پنل ادمین KaniaChatBot خوش آمدید!* 🌟\n\n' +
+      'لطفاً از منوی زیر استفاده کنید 👇',
+      mainKeyboard(true, true) // true, true = ثبت‌نام شده + ادمین
+    );
+  } catch (err) {
+    console.log('⚠️ نتوانست به ادمین پیام بفرستد:', err.message);
+  }
+}, 3000);
       }
     });
     
