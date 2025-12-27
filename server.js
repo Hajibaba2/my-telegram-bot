@@ -1913,6 +1913,14 @@ app.get('/health', async (req, res) => {
   }
 });
 
+app.get('/', (req, res) => {
+  res.status(200).send('KaniaChatBot is running');
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Express server listening on port ${PORT}`);
+});
+
 // ==================== Graceful Shutdown ====================
 async function gracefulShutdown() {
   console.log('🛑 در حال خاموش کردن ربات...');
@@ -1982,7 +1990,7 @@ console.log('🔗 RAILWAY_GIT_COMMIT_SHA:', process.env.RAILWAY_GIT_COMMIT_SHA |
         ? WEBHOOK_URL.trim().slice(0, -1) 
         : WEBHOOK_URL.trim();
       
-      console.log(`🌍 تنظیم Webhook: ${webhookUrl}/bot${BOT_TOKEN}`);
+      console.log('🌍 Webhook configured');
       
       try {
         await bot.deleteWebHook();
