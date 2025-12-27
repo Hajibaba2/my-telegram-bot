@@ -67,6 +67,13 @@ function confirmKeyboard(action) {
   ], { one_time: true });
 }
 
+function confirmDangerKeyboard(action) {
+  return createReplyKeyboard([
+    [{ text: `⚠️ تأیید ریست ${action}` }],
+    [{ text: '❌ لغو' }]
+  ], { one_time: true });
+}
+
 function backKeyboard() {
   return createReplyKeyboard([[{ text: '↩️ بازگشت' }]], { one_time: true });
 }
@@ -324,6 +331,63 @@ async function createTables() {
   } catch (err) {
     console.error('❌ خطای جدی در ایجاد جدول‌ها:', err.message);
     console.error('جزئیات خطا:', err);
+    return false;
+  }
+}
+
+// -------------------- سیستم ریست دیتابیس --------------------
+async function resetDatabase(adminId) {
+  try {
+    console.log('🔄 شروع ریست دیتابیس توسط ادمین:', adminId);
+    
+    // 1. حذف همه جداول به ترتیب
+    const tables = [
+      'broadcast_messages',
+      'ai_chats',
+      'user_messages',
+      'user_purchases',
+      'point_shop_items',
+      'level_rewards_claimed',
+      'story_requests',
+      'daily_activities',
+      'vips',
+      'users',
+      'settings',
+      'levels'
+    ];
+    
+    for (const table of tables) {
+      try {
+        await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE`);
+        console.log(`🗑️ حذف جدول ${table}`);
+      } catch (err) {
+        console.log(`⚠️ خطا در حذف ${table}:`, err.message);
+      }
+    }
+    
+    // 2. ایجاد مجدد جداول
+    await createTables();
+    
+    console.log('✅ ریست دیتابیس کامل شد');
+    
+    // اطلاع به ادمین
+    await bot.sendMessage(adminId, 
+      '✅ *ریست دیتابیس با موفقیت انجام شد!*\n\n' +
+      '🔄 همه جداول پاک و مجدداً ایجاد شدند.\n' +
+      '📊 داده‌های اولیه بارگذاری شدند.\n' +
+      '🤖 ربات آماده به کار است.',
+      { parse_mode: 'Markdown' }
+    );
+    
+    return true;
+  } catch (err) {
+    console.error('❌ خطا در ریست دیتابیس:', err.message);
+    await bot.sendMessage(adminId, 
+      '❌ *خطا در ریست دیتابیس!*\n\n' +
+      'پیام خطا:\n' +
+      `\`${err.message}\``,
+      { parse_mode: 'Markdown' }
+    );
     return false;
   }
 }
@@ -1685,6 +1749,49 @@ async function handleState(id, text, msg) {
       return;
     }
     
+    // ریست دیتابیس
+    if (state.type === 'confirm_reset_db') {
+      if (text.startsWith('⚠️ تأیید ریست دیتابیس')) {
+        bot.sendMessage(id, 
+          '⚠️ *تأیید نهایی ریست دیتابیس*\n━━━━━━━━━━━━━━━━\n' +
+          '❌ **این عمل غیرقابل برگشت است!**\n\n' +
+          '🔻 تمام اطلاعات زیر پاک می‌شود:\n' +
+          '• همه کاربران\n' +
+          '• تمام داده‌های VIP\n' +
+          '• همه چت‌ها و تاریخچه\n' +
+          '• تمام امتیازات و فعالیت‌ها\n' +
+          '• تنظیمات هوش مصنوعی\n\n' +
+          '📊 تنها جدول‌ها مجدداً ایجاد می‌شوند.\n\n' +
+          '⛔ برای تأیید نهایی، عبارت زیر را بنویسید:\n' +
+          '`من تایید میکنم که همه داده‌ها پاک خواهند شد`\n\n' +
+          '❌ برای لغو: `/cancel`',
+          { parse_mode: 'Markdown' }
+        );
+        states[id] = { type: 'final_confirm_reset_db' };
+      } else if (text === '❌ لغو') {
+        delete states[id];
+        bot.sendMessage(id, '❌ ریست دیتابیس لغو شد.', adminKeyboard());
+      }
+      return;
+    }
+    
+    if (state.type === 'final_confirm_reset_db') {
+      if (text === '/cancel') {
+        delete states[id];
+        bot.sendMessage(id, '❌ ریست دیتابیس لغو شد.', adminKeyboard());
+        return;
+      }
+      
+      if (text === 'من تایید میکنم که همه داده‌ها پاک خواهند شد') {
+        bot.sendMessage(id, '🔄 *در حال ریست دیتابیس... لطفاً صبر کنید.*', { parse_mode: 'Markdown' });
+        await resetDatabase(id);
+        delete states[id];
+      } else {
+        bot.sendMessage(id, '❌ عبارت تأیید صحیح نیست. لطفاً دقیقاً عبارت را کپی کنید.');
+      }
+      return;
+    }
+    
     // پاسخ به کاربر
     if (state.type === 'reply_to_user') {
       if (text === '/cancel') {
@@ -1947,7 +2054,18 @@ bot.on('message', async (msg) => {
     }
     
     if (text === '🔄 ریست دیتابیس') {
-      bot.sendMessage(id, '⚠️ *آیا مطمئن هستید؟* تمام داده‌ها پاک می‌شود!', { parse_mode: 'Markdown', ...confirmKeyboard('ریست دیتابیس') });
+      bot.sendMessage(id, 
+        '⚠️ *هشدار ریست دیتابیس!*\n━━━━━━━━━━━━━━━━\n' +
+        '❌ این عمل تمام داده‌های زیر را پاک می‌کند:\n' +
+        '• همه کاربران\n' +
+        '• تمام VIPها\n' +
+        '• همه چت‌ها\n' +
+        '• تمام امتیازات\n' +
+        '• تنظیمات\n\n' +
+        '🔄 تنها جدول‌ها مجدداً ایجاد می‌شوند.\n\n' +
+        '⛔ **این عمل غیرقابل برگشت است!**',
+        { parse_mode: 'Markdown', ...confirmDangerKeyboard('دیتابیس') }
+      );
       states[id] = { type: 'confirm_reset_db' };
       return;
     }
@@ -1962,32 +2080,6 @@ bot.on('message', async (msg) => {
       delete states[id];
       bot.sendMessage(id, '❌ درخواست استوری لغو شد.', mainKeyboard(true, admin));
     }
-    return;
-  }
-  
-  // تایید ریست دیتابیس
-  if (states[id] && states[id].type === 'confirm_reset_db') {
-    if (text.startsWith('✅ تأیید ریست دیتابیس')) {
-      await pool.query('DROP TABLE IF EXISTS broadcast_messages CASCADE');
-      await pool.query('DROP TABLE IF EXISTS ai_chats CASCADE');
-      await pool.query('DROP TABLE IF EXISTS user_messages CASCADE');
-      await pool.query('DROP TABLE IF EXISTS user_purchases CASCADE');
-      await pool.query('DROP TABLE IF EXISTS point_shop_items CASCADE');
-      await pool.query('DROP TABLE IF EXISTS level_rewards_claimed CASCADE');
-      await pool.query('DROP TABLE IF EXISTS story_requests CASCADE');
-      await pool.query('DROP TABLE IF EXISTS daily_activities CASCADE');
-      await pool.query('DROP TABLE IF EXISTS vips CASCADE');
-      await pool.query('DROP TABLE IF EXISTS users CASCADE');
-      await pool.query('DROP TABLE IF EXISTS settings CASCADE');
-      await pool.query('DROP TABLE IF EXISTS levels CASCADE');
-      
-      await createTables();
-      bot.sendMessage(id, '🔄 *دیتابیس ریست شد.*', { parse_mode: 'Markdown' });
-    } else if (text === '❌ لغو') {
-      bot.sendMessage(id, '❌ عملیات لغو شد.');
-    }
-    delete states[id];
-    bot.sendMessage(id, '🛡️ *پنل ادمین*', { parse_mode: 'Markdown', ...adminKeyboard() });
     return;
   }
 });
@@ -2468,36 +2560,24 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 bot.on('error', (err) => console.error('❌ خطای Bot:', err.message));
 
-
-async function verifyAndFixDatabase() {
-  console.log('🔍 بررسی و ترمیم دیتابیس...');
-  try {
-    // اینجا می‌توانید بررسی‌های اضافی روی دیتابیس انجام دهید
-    const { rows } = await pool.query('SELECT COUNT(*) FROM users');
-    console.log(`✅ دیتابیس سالم است. تعداد کاربران: ${rows[0].count}`);
-    return true;
-  } catch (err) {
-    console.error('❌ خطا در بررسی دیتابیس:', err.message);
-    return false;
-  }
-}
-
-
-
 // -------------------- راه‌اندازی سرور --------------------
 app.listen(PORT, async () => {
-    console.log('🚀 راه‌اندازی KaniaChatBot...');
-    console.log(`🌐 پورت: ${PORT}`);
-    console.log(`🤖 توکن: ${BOT_TOKEN ? '✅' : '❌'}`);
-    console.log(`👑 ادمین: ${ADMIN_CHAT_ID}`);
-    console.log(`🔗 وب‌هوک: ${WEBHOOK_URL ? '✅' : '❌'}`);
+  console.log('🚀 راه‌اندازی KaniaChatBot...');
+  console.log(`🌐 پورت: ${PORT}`);
+  console.log(`🤖 توکن: ${BOT_TOKEN ? '✅' : '❌'}`);
+  console.log(`👑 ادمین: ${ADMIN_CHAT_ID}`);
+  console.log(`🔗 وب‌هوک: ${WEBHOOK_URL ? '✅' : '❌'}`);
+  
+  // ایجاد جداول دیتابیس
+  await createTables();
+  console.log('🗄️ دیتابیس آماده است');
   
   // اولویت با WEBHOOK_URL
   if (WEBHOOK_URL && WEBHOOK_URL.trim() !== '') {
     const webhookUrl = WEBHOOK_URL.trim();
     console.log(`🌍 تنظیم Webhook از متغیر محیطی: ${webhookUrl}`);
     
-  
+    try {
       // حذف Webhook قبلی
       try {
         await bot.deleteWebHook();
