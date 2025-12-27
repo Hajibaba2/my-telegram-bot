@@ -14,6 +14,14 @@ const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID);
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
+// ==================== Global Variables ====================
+const states = {};
+const rateLimit = {};
+const tempFiles = {};
+let isPolling = false;
+let server = null;
+let isReady = false; // برای بررسی آمادگی ربات
+
 // بررسی متغیرهای محیطی
 console.log('🔧 بررسی متغیرهای محیطی...');
 console.log(`BOT_TOKEN: ${BOT_TOKEN ? '✅' : '❌'}`);
@@ -62,13 +70,6 @@ const bot = new TelegramBot(BOT_TOKEN, {
   polling: false,
   filepath: false
 });
-
-// ==================== Global Variables ====================
-const states = {};
-const rateLimit = {};
-const tempFiles = {};
-let isPolling = false;
-let server = null;
 
 // ==================== Helper Functions ====================
 function logActivity(userId, action, details = '') {
@@ -1588,12 +1589,6 @@ bot.on('message', async (msg) => {
         return;
       }
       
-      if (text === '👀 مشاهده پرامپت') {
-        states[id] = { type: 'view_prompt' };
-        await handleState(id, '', msg);
-        return;
-      }
-      
       if (text === '↩️ بازگشت به پنل ادمین') {
         cleanupUserState(id);
         await bot.sendMessage(id, '↩️ بازگشت به پنل ادمین', adminKeyboard());
@@ -1951,13 +1946,23 @@ app.post(`/bot${BOT_TOKEN}`, (req, res) => {
   res.sendStatus(200);
 });
 
+// Health check endpoint - Railway به این endpoint درخواست می‌فرستد
 app.get('/', (req, res) => {
+  if (!isReady) {
+    return res.status(503).json({ 
+      status: 'loading', 
+      message: 'ربات در حال راه‌اندازی است...',
+      timestamp: new Date().toISOString()
+    });
+  }
+  
   res.json({
     status: 'online',
     service: 'KaniaChatBot',
     timestamp: new Date().toISOString(),
     webhook: WEBHOOK_URL ? 'configured' : 'not-configured',
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    ready: isReady
   });
 });
 
@@ -1968,7 +1973,8 @@ app.get('/health', async (req, res) => {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
-      memory: process.memoryUsage()
+      memory: process.memoryUsage(),
+      ready: isReady
     });
   } catch (error) {
     console.error('❌ Health check failed:', error.message);
@@ -2018,14 +2024,26 @@ async function gracefulShutdown() {
   }
   
   console.log('👋 ربات خاموش شد.');
-  setTimeout(() => {
-    process.exit(0);
-  }, 1000);
+  // حذف process.exit(0) از اینجا
 }
 
 // ==================== Error Handlers ====================
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+// فقط یک event handler برای SIGTERM و SIGINT داشته باشیم
+process.on('SIGTERM', () => {
+  console.log('📡 دریافت SIGTERM - خاموش کردن تمیز...');
+  gracefulShutdown().finally(() => {
+    console.log('✅ خاموش‌سازی کامل شد');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('📡 دریافت SIGINT - خاموش کردن تمیز...');
+  gracefulShutdown().finally(() => {
+    console.log('✅ خاموش‌سازی کامل شد');
+    process.exit(0);
+  });
+});
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason, reason?.stack);
@@ -2046,14 +2064,6 @@ bot.on('polling_error', (err) => {
   console.error('❌ خطای Polling:', err.message, err.stack);
 });
 
-process.on('SIGTERM', () => {
-  console.log('📡 دریافت SIGTERM - خاموش کردن تمیز...');
-  gracefulShutdown().finally(() => {
-    console.log('✅ خاموش‌سازی کامل شد');
-    process.exit(0);
-  });
-});
-
 // از Railway متغیرهای محیطی استفاده کنید
 const RAILWAY_ENVIRONMENT = process.env.RAILWAY_ENVIRONMENT || 'development';
 const RAILWAY_PUBLIC_URL = process.env.RAILWAY_PUBLIC_URL;
@@ -2064,7 +2074,8 @@ app.get('/keep-alive', (req, res) => {
     status: 'alive', 
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    memory: process.memoryUsage()
+    memory: process.memoryUsage(),
+    ready: isReady
   });
 });
 
@@ -2088,7 +2099,8 @@ app.get('/railway-health', async (req, res) => {
       database: 'connected',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
-      environment: RAILWAY_ENVIRONMENT
+      environment: RAILWAY_ENVIRONMENT,
+      ready: isReady
     });
   } catch (error) {
     console.error('❌ Health check failed:', error.message);
@@ -2140,8 +2152,6 @@ async function startServer() {
       process.exit(1);
     }
     
-    console.log('🎉 تمام جدول‌ها با موفقیت ایجاد/بررسی شدند');
-    
     // فعال‌سازی polling برای محیط local
     console.log('🔁 فعال‌سازی polling برای محیط local...');
     await startPolling();
@@ -2149,6 +2159,7 @@ async function startServer() {
     // راه‌اندازی سرور
     server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`✅ Express server listening on port ${PORT}`);
+      isReady = true; // ربات آماده است
       console.log('🎉 KaniaChatBot آماده است! 🚀');
       
       // ارسال نوتیفیکیشن به ادمین
@@ -2178,6 +2189,7 @@ async function startServer() {
         const altPort = parseInt(PORT) + 1;
         server = app.listen(altPort, '0.0.0.0', () => {
           console.log(`✅ سرور روی پورت ${altPort} راه‌اندازی شد`);
+          isReady = true;
         });
       }
     });
@@ -2201,7 +2213,6 @@ async function railwayStartup() {
       process.exit(1);
     }
     
-    console.log('🎉 تمام جدول‌ها با موفقیت ایجاد/بررسی شدند');
     console.log('📡 Setting up for Railway...');
     console.log('📦 NODE_ENV:', process.env.NODE_ENV);
     console.log('🏗️ RAILWAY_ENVIRONMENT:', RAILWAY_ENVIRONMENT);
@@ -2232,6 +2243,7 @@ async function railwayStartup() {
     // راه‌اندازی سرور
     server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`✅ Express server listening on port ${PORT}`);
+      isReady = true; // ربات آماده است
       console.log('🎉 KaniaChatBot آماده است! 🚀');
       
       // ارسال نوتیفیکیشن به ادمین
@@ -2261,6 +2273,7 @@ async function railwayStartup() {
         const altPort = parseInt(PORT) + 1;
         server = app.listen(altPort, '0.0.0.0', () => {
           console.log(`✅ سرور روی پورت ${altPort} راه‌اندازی شد`);
+          isReady = true;
         });
       }
     });
