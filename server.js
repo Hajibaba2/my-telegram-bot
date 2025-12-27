@@ -1948,34 +1948,65 @@ process.on('unhandledRejection', (reason, promise) => {
 bot.on('error', (err) => console.error('❌ خطای Bot:', err.message));
 
 // ==================== راه‌اندازی سرور ====================
-app.listen(PORT, async () => {
-  console.log('🚀 راه‌اندازی KaniaChatBot...');
-  console.log(`🌐 پورت: ${PORT}`);
-  console.log(`🤖 توکن: ${BOT_TOKEN ? '✅' : '❌'}`);
-  console.log(`👑 ادمین: ${ADMIN_CHAT_ID}`);
-  console.log(`🔗 وب‌هوک: ${WEBHOOK_URL ? '✅' : '❌'}`);
-  
-  await createTables();
-  console.log('🗄️ دیتابیس آماده است');
-  
-  if (WEBHOOK_URL && WEBHOOK_URL.trim() !== '') {
-    const webhookUrl = WEBHOOK_URL.trim();
-    console.log(`🌍 تنظیم Webhook: ${webhookUrl}`);
+// ==================== راه‌اندازی سرور ====================
+async function startServer() {
+  try {
+    // 1. ابتدا دیتابیس رو چک کن
+    console.log('🗄️ بررسی دیتابیس...');
+    const dbReady = await createTables();
+    if (!dbReady) {
+      throw new Error('دیتابیس آماده نیست');
+    }
     
-    try {
-      await bot.deleteWebHook();
-      await bot.setWebHook(webhookUrl);
-      console.log('✅ Webhook تنظیم شد.');
-    } catch (err) {
-      console.error('❌ خطا در تنظیم webhook:', err.message);
+    // 2. سرور رو راه‌اندازی کن
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ سرور در حال اجرا است`);
+      console.log(`   🌐 آدرس: http://0.0.0.0:${PORT}`);
+      console.log(`   📡 پورت: ${PORT}`);
+      console.log(`   🏗️ محیط: ${process.env.NODE_ENV || 'development'}`);
+    });
+    
+    // 3. سپس بات رو راه‌اندازی کن
+    console.log('🤖 راه‌اندازی بات تلگرام...');
+    
+    if (WEBHOOK_URL && WEBHOOK_URL.trim() !== '') {
+      const webhookUrl = WEBHOOK_URL.trim().endsWith('/') 
+        ? WEBHOOK_URL.trim().slice(0, -1) 
+        : WEBHOOK_URL.trim();
+      
+      console.log(`🌍 تنظیم Webhook: ${webhookUrl}/bot${BOT_TOKEN}`);
+      
+      try {
+        await bot.deleteWebHook();
+        await bot.setWebHook(`${webhookUrl}/bot${BOT_TOKEN}`);
+        console.log('✅ Webhook تنظیم شد.');
+      } catch (err) {
+        console.error('❌ خطا در تنظیم webhook:', err.message);
+        console.log('🔄 استفاده از polling...');
+        bot.startPolling();
+        console.log('🔁 ربات با polling فعال شد.');
+      }
+    } else {
+      console.log('🌐 فعال‌سازی polling...');
       bot.startPolling();
       console.log('🔁 ربات با polling فعال شد.');
     }
-  } else {
-    console.log('🌐 فعال‌سازی polling...');
-    bot.startPolling();
-    console.log('🔁 ربات با polling فعال شد.');
+    
+    console.log('🎉 KaniaChatBot آماده است! 🚀');
+    
+    // هندلر graceful shutdown
+    server.on('close', async () => {
+      console.log('🛑 سرور در حال بسته شدن...');
+      await gracefulShutdown();
+    });
+    
+    return server;
+    
+  } catch (error) {
+    console.error('❌ خطا در راه‌اندازی سرور:', error);
+    process.exit(1);
   }
-  
-  console.log('🎉 KaniaChatBot آماده است! 🚀');
-});
+}
+
+// شروع سرور
+startServer();
