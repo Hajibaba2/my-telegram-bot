@@ -2061,7 +2061,7 @@ const RAILWAY_ENVIRONMENT = process.env.RAILWAY_ENVIRONMENT || 'development';
 // ==================== Server Startup ====================
 // ==================== Railway Specific Configuration ====================
 const RAILWAY_PUBLIC_URL = process.env.RAILWAY_PUBLIC_URL;
-const RAILWAY_ENVIRONMENT = process.env.RAILWAY_ENVIRONMENT || 'development';
+
 
 // Keep-alive endpoint
 app.get('/keep-alive', (req, res) => {
