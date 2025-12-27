@@ -2084,33 +2084,44 @@ async function startServer() {
     }
     
     // شروع سرور Express
-    server = app.listen(PORT, () => {
-      console.log(`✅ سرور Express روی پورت ${PORT} راه‌اندازی شد`);
-      console.log('🎉 KaniaChatBot آماده است! 🚀');
-    });
-    
-    // مدیریت خطای پورت در حال استفاده
-    server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        console.error(`❌ پورت ${PORT} در حال استفاده است!`);
-        console.log('🔄 تلاش برای استفاده از پورت تصادفی...');
-        
-        // بستن سرور فعلی
-        if (server) {
-          server.close();
-        }
-        
-        // تلاش با پورت تصادفی
-        const randomPort = Math.floor(Math.random() * (65535 - 1024) + 1024);
-        server = app.listen(randomPort, () => {
-          console.log(`✅ سرور Express روی پورت ${randomPort} راه‌اندازی شد`);
+    const startServerOnPort = (port) => {
+      return new Promise((resolve, reject) => {
+        server = app.listen(port, () => {
+          console.log(`✅ سرور Express روی پورت ${port} راه‌اندازی شد`);
           console.log('🎉 KaniaChatBot آماده است! 🚀');
+          resolve(server);
         });
+        
+        server.on('error', (err) => {
+          if (err.code === 'EADDRINUSE') {
+            console.error(`❌ پورت ${port} در حال استفاده است!`);
+            reject(err);
+          } else {
+            console.error('❌ خطای سرور:', err.message);
+            reject(err);
+          }
+        });
+      });
+    };
+    
+    // تلاش برای شروع سرور روی پورت اصلی یا پورت جایگزین
+    try {
+      await startServerOnPort(PORT);
+    } catch (err) {
+      if (err.code === 'EADDRINUSE') {
+        console.log('🔄 تلاش برای استفاده از پورت تصادفی...');
+        const randomPort = Math.floor(Math.random() * (65535 - 1024) + 1024);
+        try {
+          await startServerOnPort(randomPort);
+        } catch (err2) {
+          console.error('❌ خطا در راه‌اندازی سرور روی هر پورت:', err2.message);
+          process.exit(1);
+        }
       } else {
         console.error('❌ خطای سرور:', err.message);
         process.exit(1);
       }
-    });
+    }
     
   } catch (err) {
     console.error('❌ خطا در راه‌اندازی سرور:', err.message, err.stack);
