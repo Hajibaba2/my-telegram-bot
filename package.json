@@ -1,9 +1,29 @@
-"dependencies": {
-  "node-telegram-bot-api": "^0.64.0",
-  "pg": "^8.11.3",
-  "moment-jalaali": "^0.9.2",
-  "express": "^4.18.2",
-  "node-fetch": "^2.7.0",
-  "winston": "^3.13.0",
-  "morgan": "^1.10.0"
+{
+  "name": "kania-chat-bot",
+  "version": "2.0.0",
+  "description": "Telegram Bot with AI, Shop, and Point System",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "pg": "^8.11.3",
+    "moment-jalaali": "^0.9.4",
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "ai",
+    "shop",
+    "points"
+  ],
+  "author": "Kania Team",
+  "license": "MIT"
 }
