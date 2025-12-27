@@ -189,11 +189,12 @@ async function startServer() {
     
     // تنظیم Webhook برای Railway
     if (RAILWAY_PUBLIC_URL) {
-      const webhookUrl = RAILWAY_PUBLIC_URL + `/bot${BOT_TOKEN}`;
+        // تنظیم webhook
+  const webhookUrl = `\( {RAILWAY_PUBLIC_URL}/bot \){BOT_TOKEN}`;
       console.log(`🌍 تنظیم Webhook: ${webhookUrl}`);
       
       try {
-        await bot.deleteWebHook();
+        // await bot.deleteWebHook();
         await bot.setWebHook(webhookUrl, {
           max_connections: 100,
           allowed_updates: ['message', 'callback_query']
@@ -253,13 +254,13 @@ async function startServer() {
 async function gracefulShutdown() {
   console.log('🛑 در حال خاموش کردن ربات...');
   
-  try {
-    console.log('🗑️ حذف Webhook...');
-    await bot.deleteWebHook();
-    console.log('✅ Webhook حذف شد.');
-  } catch (err) {
-    console.error('❌ خطا در حذف Webhook:', err.message);
-  }
+  //try {
+   // console.log('🗑️ حذف Webhook...');
+   // await bot.deleteWebHook();
+ //   console.log('✅ Webhook حذف شد.');
+//  } catch (err) {
+//    console.error('❌ خطا در حذف Webhook:', err.message);  
+ // }
   
   try {
     console.log('🔌 بستن اتصال دیتابیس...');
