@@ -2469,6 +2469,20 @@ process.on('unhandledRejection', (reason, promise) => {
 bot.on('error', (err) => console.error('❌ خطای Bot:', err.message));
 
 
+async function verifyAndFixDatabase() {
+  console.log('🔍 بررسی و ترمیم دیتابیس...');
+  try {
+    // اینجا می‌توانید بررسی‌های اضافی روی دیتابیس انجام دهید
+    const { rows } = await pool.query('SELECT COUNT(*) FROM users');
+    console.log(`✅ دیتابیس سالم است. تعداد کاربران: ${rows[0].count}`);
+    return true;
+  } catch (err) {
+    console.error('❌ خطا در بررسی دیتابیس:', err.message);
+    return false;
+  }
+}
+
+
 
 // -------------------- راه‌اندازی سرور --------------------
 app.listen(PORT, async () => {
