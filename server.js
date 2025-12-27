@@ -2046,7 +2046,6 @@ bot.on('polling_error', (err) => {
   console.error('❌ خطای Polling:', err.message, err.stack);
 });
 
-// قبل از startServer() این کد را اضافه کنید:
 process.on('SIGTERM', () => {
   console.log('📡 دریافت SIGTERM - خاموش کردن تمیز...');
   gracefulShutdown().finally(() => {
@@ -2056,12 +2055,8 @@ process.on('SIGTERM', () => {
 });
 
 // از Railway متغیرهای محیطی استفاده کنید
-
 const RAILWAY_ENVIRONMENT = process.env.RAILWAY_ENVIRONMENT || 'development';
-// ==================== Server Startup ====================
-// ==================== Railway Specific Configuration ====================
 const RAILWAY_PUBLIC_URL = process.env.RAILWAY_PUBLIC_URL;
-
 
 // Keep-alive endpoint
 app.get('/keep-alive', (req, res) => {
@@ -2113,6 +2108,85 @@ setInterval(() => {
     global.gc();
   }
 }, 30 * 60 * 1000); // هر 30 دقیقه
+
+// ==================== تابع startPolling ====================
+async function startPolling() {
+  console.log('🔁 فعال‌سازی polling mode...');
+  try {
+    bot.startPolling({
+      polling: {
+        timeout: 10,
+        interval: 300
+      }
+    });
+    isPolling = true;
+    console.log('✅ Polling mode فعال شد.');
+  } catch (err) {
+    console.error('❌ خطا در فعال‌سازی polling:', err.message);
+    throw err;
+  }
+}
+
+// ==================== تابع startServer ====================
+async function startServer() {
+  console.log('🚀 Local Startup - KaniaChatBot');
+  console.log('🗄️ بررسی دیتابیس...');
+  
+  try {
+    // ایجاد جدول‌ها
+    const tablesCreated = await createTables();
+    if (!tablesCreated) {
+      console.error('❌ خطا در ایجاد جدول‌ها. خروج...');
+      process.exit(1);
+    }
+    
+    console.log('🎉 تمام جدول‌ها با موفقیت ایجاد/بررسی شدند');
+    
+    // فعال‌سازی polling برای محیط local
+    console.log('🔁 فعال‌سازی polling برای محیط local...');
+    await startPolling();
+    
+    // راه‌اندازی سرور
+    server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ Express server listening on port ${PORT}`);
+      console.log('🎉 KaniaChatBot آماده است! 🚀');
+      
+      // ارسال نوتیفیکیشن به ادمین
+      if (ADMIN_CHAT_ID) {
+        setTimeout(async () => {
+          try {
+            await bot.sendMessage(ADMIN_CHAT_ID, 
+              `🚀 *ربات راه‌اندازی شد!*\n\n` +
+              `📍 *محیط:* Local Development\n` +
+              `🌐 *پورت:* ${PORT}\n` +
+              `📅 *زمان:* ${new Date().toLocaleString('fa-IR')}\n\n` +
+              `✅ ربات آماده ارائه خدمات است.`,
+              { parse_mode: 'Markdown' }
+            );
+          } catch (err) {
+            console.log('⚠️ نتوانست به ادمین پیام بفرستد:', err.message);
+          }
+        }, 3000);
+      }
+    });
+    
+    // مدیریت خطاهای سرور
+    server.on('error', (err) => {
+      console.error('❌ خطای سرور:', err.message);
+      if (err.code === 'EADDRINUSE') {
+        console.log('🔄 تلاش برای پورت دیگر...');
+        const altPort = parseInt(PORT) + 1;
+        server = app.listen(altPort, '0.0.0.0', () => {
+          console.log(`✅ سرور روی پورت ${altPort} راه‌اندازی شد`);
+        });
+      }
+    });
+    
+  } catch (err) {
+    console.error('❌ خطا در راه‌اندازی:', err.message, err.stack);
+    process.exit(1);
+  }
+}
 
 // ==================== Railway Startup ====================
 async function railwayStartup() {
@@ -2210,5 +2284,3 @@ if (RAILWAY_ENVIRONMENT === 'production' || RAILWAY_PUBLIC_URL) {
   // استفاده از راه‌اندازی محلی
   startServer();
 }
-// شروع برنامه
-startServer();
