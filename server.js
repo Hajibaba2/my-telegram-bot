@@ -1,5 +1,3 @@
-// اضافه کردن این خط در بالاترین قسمت فایل
-console.log('🚂 Railway Startup - KaniaChatBot');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const moment = require('moment-jalaali');
@@ -16,29 +14,62 @@ const ADMIN_CHAT_ID = parseInt(process.env.ADMIN_CHAT_ID);
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
-if (!BOT_TOKEN || isNaN(ADMIN_CHAT_ID)) {
-  console.error('خطا انتقادی: BOT_TOKEN یا ADMIN_CHAT_ID تنظیم نشده است!');
+// بررسی متغیرهای محیطی
+console.log('🔧 بررسی متغیرهای محیطی...');
+console.log(`BOT_TOKEN: ${BOT_TOKEN ? '✅' : '❌'}`);
+console.log(`ADMIN_CHAT_ID: ${ADMIN_CHAT_ID || '❌'}`);
+console.log(`PORT: ${PORT}`);
+console.log(`WEBHOOK_URL: ${WEBHOOK_URL || '❌'}`);
+
+if (!BOT_TOKEN) {
+  console.error('❌ خطا: BOT_TOKEN تنظیم نشده است!');
   process.exit(1);
 }
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-});
+if (!ADMIN_CHAT_ID || isNaN(ADMIN_CHAT_ID)) {
+  console.error('❌ خطا: ADMIN_CHAT_ID نامعتبر است!');
+  process.exit(1);
+}
+
+// تنظیم pool دیتابیس
+let pool;
+try {
+  const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  console.log(`🗄️ اتصال به دیتابیس: ${connectionString ? '✅' : '❌'}`);
+  
+  pool = new Pool({
+    connectionString: connectionString,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000, // افزایش تایم‌اوت
+  });
+
+  // تست اتصال دیتابیس
+  pool.on('connect', () => {
+    console.log('✅ اتصال دیتابیس موفق');
+  });
+
+  pool.on('error', (err) => {
+    console.error('❌ خطای دیتابیس:', err.message);
+  });
+} catch (err) {
+  console.error('❌ خطا در تنظیم دیتابیس:', err.message);
+  process.exit(1);
+}
 
 const bot = new TelegramBot(BOT_TOKEN, {
   polling: false,
   filepath: false
 });
 
+// ==================== Global Variables ====================
 const states = {};
 const rateLimit = {};
 const tempFiles = {};
+let isPolling = false;
 
-// ==================== توابع کمکی ====================
+// ==================== Helper Functions ====================
 function logActivity(userId, action, details = '') {
   console.log(`[${new Date().toISOString()}] User ${userId}: ${action} ${details}`);
 }
@@ -88,30 +119,48 @@ function createProgressBar(percentage, length = 20) {
 }
 
 function escapeMarkdown(text) {
+  if (!text) return '';
   return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
 }
 
-// ==================== مدیریت فایل موقت ====================
+// ==================== Temp File Management ====================
 function saveTempFile(userId, content, ext = '.txt') {
-  const filename = `/tmp/${userId}_${Date.now()}${ext}`;
-  fs.writeFileSync(filename, content, 'utf8');
-  
-  if (!tempFiles[userId]) tempFiles[userId] = [];
-  tempFiles[userId].push(filename);
-  
-  setTimeout(() => {
-    if (tempFiles[userId]) {
-      tempFiles[userId].forEach(file => {
-        if (fs.existsSync(file)) fs.unlinkSync(file);
-      });
-      delete tempFiles[userId];
+  try {
+    const tmpDir = '/tmp';
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
     }
-  }, 5 * 60 * 1000);
-  
-  return filename;
+    
+    const filename = `${tmpDir}/${userId}_${Date.now()}${ext}`;
+    fs.writeFileSync(filename, content, 'utf8');
+    
+    if (!tempFiles[userId]) tempFiles[userId] = [];
+    tempFiles[userId].push(filename);
+    
+    // حذف خودکار بعد از 5 دقیقه
+    setTimeout(() => {
+      try {
+        if (tempFiles[userId]) {
+          tempFiles[userId].forEach(file => {
+            if (fs.existsSync(file)) {
+              fs.unlinkSync(file);
+            }
+          });
+          delete tempFiles[userId];
+        }
+      } catch (err) {
+        console.error('❌ خطا در حذف فایل موقت:', err);
+      }
+    }, 5 * 60 * 1000);
+    
+    return filename;
+  } catch (err) {
+    console.error('❌ خطا در ایجاد فایل موقت:', err);
+    return null;
+  }
 }
 
-// ==================== ایجاد جداول ====================
+// ==================== Database Tables Creation ====================
 async function createTables() {
   console.log('🗄️ شروع ایجاد/بررسی جدول‌ها...');
   
@@ -143,6 +192,7 @@ async function createTables() {
         level INTEGER DEFAULT 1
       );
     `);
+    console.log('✅ جدول users ایجاد شد');
     
     await pool.query(`
       CREATE TABLE IF NOT EXISTS vips (
@@ -154,6 +204,7 @@ async function createTables() {
         approved BOOLEAN DEFAULT FALSE
       );
     `);
+    console.log('✅ جدول vips ایجاد شد');
     
     await pool.query(`
       CREATE TABLE IF NOT EXISTS settings (
@@ -169,6 +220,11 @@ async function createTables() {
         prompt_content TEXT
       );
     `);
+    console.log('✅ جدول settings ایجاد شد');
+    
+    await pool.query(`INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;`);
+    console.log('✅ تنظیمات اولیه اضافه شد');
+    
     
     await pool.query(`INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;`);
     
@@ -311,11 +367,12 @@ async function createTables() {
     
   } catch (err) {
     console.error('❌ خطای جدی در ایجاد جدول‌ها:', err.message);
+    console.error('Stack trace:', err.stack);
     return false;
   }
 }
 
-// ==================== سیستم امتیازدهی ====================
+// ==================== Score System ====================
 async function addPoints(userId, actionCode, details = {}) {
   try {
     const pointRules = {
@@ -354,7 +411,7 @@ async function addPoints(userId, actionCode, details = {}) {
   }
 }
 
-// ==================== سیستم DeepSeek AI ====================
+// ==================== DeepSeek AI System ====================
 async function callDeepSeekAI(apiKey, messages, model = 'deepseek-chat') {
   try {
     const controller = new AbortController();
@@ -392,7 +449,7 @@ async function callDeepSeekAI(apiKey, messages, model = 'deepseek-chat') {
   }
 }
 
-// ==================== ارجاع به ادمین ====================
+// ==================== Refer to Admin ====================
 async function referToAdmin(userId, userQuestion, error) {
   try {
     const { rows: userRows } = await pool.query(
@@ -444,7 +501,7 @@ async function referToAdmin(userId, userQuestion, error) {
   }
 }
 
-// ==================== فروشگاه امتیازی ====================
+// ==================== Point Shop ====================
 async function showPointShop(userId) {
   try {
     const { rows: items } = await pool.query(
@@ -554,7 +611,7 @@ async function handlePurchase(userId, itemCode) {
   }
 }
 
-// ==================== کیبوردها ====================
+// ==================== Keyboards ====================
 function mainKeyboard(reg, admin) {
   const k = [
     [{ text: '📺 کانال رایگان' }, { text: '💎 عضویت VIP' }],
@@ -609,7 +666,7 @@ function vipKeyboard() {
   ], { one_time: true });
 }
 
-// ==================== توابع کاربر ====================
+// ==================== User Functions ====================
 async function isVip(id) {
   try {
     const { rows } = await pool.query(
@@ -715,7 +772,7 @@ async function formatUserStats(userId) {
   }
 }
 
-// ==================== مدیریت State ====================
+// ==================== State Management ====================
 async function handleState(id, text, msg) {
   const state = states[id];
   const admin = id === ADMIN_CHAT_ID;
@@ -725,8 +782,9 @@ async function handleState(id, text, msg) {
   console.log(`🔍 Handling state for ${id}: ${state.type}`);
   
   try {
-    // 1. ثبت‌نام کامل
+    // ثبت‌نام کامل
     if (state.type === 'register_full') {
+        
       const questions = [
         '👤 نام خود را وارد کنید:',
         '🎂 سن خود را وارد کنید (عدد):',
@@ -748,8 +806,8 @@ async function handleState(id, text, msg) {
           state.data.phone = null;
           state.step++;
         } 
-        // بررسی اگر عدد 10-15 رقمی است
-        else if (/^\d{10,15}$/.test(phoneInput)) {
+        // بررسی اگر عدد 10-11 رقمی است
+        else if (/^\d{10,11}$/.test(phoneInput)) {
           state.data.phone = phoneInput;
           state.step++;
           await addPoints(id, 'add_phone'); // اعطای امتیاز برای ثبت شماره
@@ -760,7 +818,7 @@ async function handleState(id, text, msg) {
             '❌ ورودی نامعتبر!\n\n' +
             '• فقط عدد وارد کنید\n' +
             '• اگر نمی‌خواهید ثبت کنید: 0\n' +
-            '• اگر می‌خواهید ثبت کنید: شماره 10-15 رقمی\n\n' +
+            '• اگر می‌خواهید ثبت کنید: شماره 10-11 رقمی\n\n' +
             'لطفاً دوباره وارد کنید:'
           );
           return;
@@ -793,8 +851,9 @@ async function handleState(id, text, msg) {
       await bot.sendMessage(id, questions[state.step]);
       return;
     }
+    }
     
-    // 2. ویرایش اطلاعات
+    // ویرایش اطلاعات
     if (state.type === 'edit_menu') {
       const fieldMap = {
         '👤 نام': 'name',
@@ -817,7 +876,7 @@ async function handleState(id, text, msg) {
           message += `*مقدار فعلی:* ${current || 'ندارد'}\n`;
           message += `━━━━━━━━━━━━━━━━\n`;
           message += `• اگر نمی‌خواهید شماره ثبت کنید: عدد 0 را وارد کنید\n`;
-          message += `• اگر می‌خواهید ثبت کنید: شماره 10-15 رقمی\n`;
+          message += `• اگر می‌خواهید ثبت کنید: شماره 10-11 رقمی\n`;
           message += `• برای لغو: /cancel`;
         } else {
           const fieldNames = {
@@ -857,11 +916,11 @@ async function handleState(id, text, msg) {
         if (text === '0') {
           await pool.query(`UPDATE users SET ${field} = NULL WHERE telegram_id = $1`, [id]);
           await bot.sendMessage(id, '✅ شماره تلفن حذف شد.', editKeyboard());
-        } else if (/^\d{10,15}$/.test(text)) {
+        } else if (/^\d{10,11}$/.test(text)) {
           await pool.query(`UPDATE users SET ${field} = $1 WHERE telegram_id = $2`, [text, id]);
           await bot.sendMessage(id, '✅ شماره تلفن بروزرسانی شد.', editKeyboard());
         } else {
-          await bot.sendMessage(id, '❌ شماره تلفن نامعتبر! لطفاً عدد 10-15 رقمی وارد کنید یا 0 برای حذف.');
+          await bot.sendMessage(id, '❌ شماره تلفن نامعتبر! لطفاً عدد 10-11 رقمی وارد کنید یا 0 برای حذف.');
           return;
         }
       } else {
@@ -874,8 +933,9 @@ async function handleState(id, text, msg) {
       cleanupUserState(id);
       return;
     }
+    }
     
-    // 3. چت با ادمین
+    // چت با ادمین
     if (state.type === 'chat_admin') {
       const { rows: userRows } = await pool.query(
         'SELECT can_send_media FROM users WHERE telegram_id = $1',
@@ -920,17 +980,19 @@ async function handleState(id, text, msg) {
       const fileId = msg.photo ? msg.photo[msg.photo.length - 1].file_id : 
                     msg.video?.file_id || msg.document?.file_id || msg.animation?.file_id || null;
       
-      await pool.query(`
-        INSERT INTO user_messages (telegram_id, message_text, media_type, media_file_id, is_from_user)
-        VALUES ($1, $2, $3, $4, TRUE)
-      `, [id, msg.caption || text, 
-          msg.photo ? 'photo' : msg.video ? 'video' : msg.document ? 'document' : msg.animation ? 'animation' : 'text', 
-          fileId]);
+      await pool.query(
+        `INSERT INTO user_messages (telegram_id, message_text, media_type, media_file_id, is_from_user)
+        VALUES ($1, $2, $3, $4, TRUE)`,
+        [id, msg.caption || text, 
+         msg.photo ? 'photo' : msg.video ? 'video' : msg.document ? 'document' : msg.animation ? 'animation' : 'text', 
+         fileId]
+      );
       
       await addPoints(id, 'message_admin');
       return;
     }
-    
+
+
     // 4. چت با هوش مصنوعی
     if (state.type === 'ai_chat') {
       if (text === '↩️ بازگشت') {
@@ -1000,6 +1062,7 @@ async function handleState(id, text, msg) {
         await pool.query('UPDATE users SET ai_questions_used = ai_questions_used + 1 WHERE telegram_id = $1', [id]);
         await pool.query('INSERT INTO ai_chats (telegram_id, user_question, ai_response) VALUES ($1, $2, $3)', [id, text, reply]);
         await addPoints(id, 'ai_chat');
+
         
       } catch (err) {
         console.error('❌ خطا در ارتباط با هوش مصنوعی:', err.message);
@@ -1238,14 +1301,15 @@ async function handleState(id, text, msg) {
       return;
     }
     
+
   } catch (err) {
-    console.error('❌ خطا در handleState:', err.message);
+    console.error('❌ خطا در handleState:', err.message, err.stack);
     await bot.sendMessage(id, '❌ خطای داخلی رخ داد. لطفاً دوباره تلاش کنید.');
     cleanupUserState(id);
   }
 }
 
-// ==================== دستور /start ====================
+// ==================== /start Command ====================
 bot.onText(/\/start/, async (msg) => {
   const id = msg.chat.id;
   
@@ -1287,12 +1351,12 @@ bot.onText(/\/start/, async (msg) => {
     
     logActivity(id, 'استارت کرد');
   } catch (err) {
-    console.error('❌ خطا در دستور /start:', err.message);
+    console.error('❌ خطا در دستور /start:', err.message, err.stack);
     await bot.sendMessage(id, '❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.');
   }
 });
 
-// ==================== مدیریت پیام‌ها ====================
+// ==================== Message Management ====================
 bot.on('message', async (msg) => {
   const id = msg.chat.id;
   const text = msg.text || '';
@@ -1311,104 +1375,7 @@ bot.on('message', async (msg) => {
     return;
   }
   
-  // ---------- منوی اصلی کاربران ----------
-  
-  // 📊 آمار من
-  if (text === '📊 آمار من') {
-    try {
-      const stats = await formatUserStats(id);
-      if (stats) {
-        await bot.sendMessage(id, stats, { 
-          parse_mode: 'Markdown', 
-          ...statsKeyboard() 
-        });
-      } else {
-        await bot.sendMessage(id, '⚠️ ابتدا ثبت‌نام کنید.', mainKeyboard(false, admin));
-      }
-    } catch (err) {
-      console.error('❌ خطا در نمایش آمار:', err);
-      await bot.sendMessage(id, '❌ خطا در بارگذاری آمار.');
     }
-    return;
-  }
-  
-  // 🛒 فروشگاه امتیاز
-  if (text === '🛒 فروشگاه امتیاز') {
-    try {
-      const shopMessage = await showPointShop(id);
-      await bot.sendMessage(id, shopMessage, { 
-        parse_mode: 'Markdown', 
-        ...backKeyboard() 
-      });
-      states[id] = { type: 'point_shop' };
-    } catch (err) {
-      console.error('❌ خطا در نمایش فروشگاه:', err);
-      await bot.sendMessage(id, '❌ خطا در بارگذاری فروشگاه.');
-    }
-    return;
-  }
-  
-  // 🎁 دریافت 300 امتیاز با استوری
-  if (text === '🎁 دریافت 300 امتیاز با استوری') {
-    await bot.sendMessage(id,
-      `🎁 *دریافت 300 امتیاز با انتشار استوری!*\n\n` +
-      `📌 *مراحل دریافت امتیاز:*\n` +
-      `1. درخواست بنر و لینک می‌دهید\n` +
-      `2. بنر ما را در استوری منتشر می‌کنید\n` +
-      `3. بعد از 24 ساعت اسکرین‌شات می‌فرستید\n` +
-      `4. پس از تأیید ادمین، 300 امتیاز دریافت می‌کنید\n\n` +
-      `💰 *مبلغ جایزه:* 300 امتیاز\n` +
-      `⏱️ *زمان مورد نیاز:* 24 ساعت بعد از انتشار\n\n` +
-      `آیا مایل به ادامه هستید؟`,
-      {
-        parse_mode: 'Markdown',
-        ...createReplyKeyboard([
-          [{ text: '📨 درخواست بنر و لینک' }],
-          [{ text: '❌ انصراف' }]
-        ], { one_time: true })
-      }
-    );
-    states[id] = { type: 'story_request_info' };
-    return;
-  }
-  
-  // 📺 کانال رایگان
-  if (text === '📺 کانال رایگان') {
-    try {
-      const { rows } = await pool.query('SELECT free_channel FROM settings');
-      await bot.sendMessage(id, 
-        `📢 *کانال رایگان*\n━━━━━━━━━━━━━━━━\n${rows[0]?.free_channel || 'تنظیم نشده ⚠️'}\n━━━━━━━━━━━━━━━━`, 
-        { parse_mode: 'Markdown' }
-      );
-    } catch (err) {
-      console.error('❌ خطا در نمایش کانال:', err);
-      await bot.sendMessage(id, '❌ خطا در بارگذاری اطلاعات کانال.');
-    }
-    return;
-  }
-  
-  // 💎 عضویت VIP
-  if (text === '💎 عضویت VIP') {
-    try {
-      const { rows } = await pool.query('SELECT membership_fee, wallet_address, network FROM settings');
-      const s = rows[0];
-      
-      if (s?.membership_fee && s?.wallet_address && s?.network) {
-        const msgText = `💎 *عضویت VIP* 💎\n━━━━━━━━━━━━━━━━\n💰 *مبلغ:* ${s.membership_fee}\n\n👛 *آدرس کیف پول:*\n\`${s.wallet_address}\`\n\n🌐 *شبکه:* ${s.network}\n━━━━━━━━━━━━━━━━\n📸 پس از واریز، عکس فیش را ارسال کنید.`;
-        await bot.sendMessage(id, escapeMarkdown(msgText), { 
-          parse_mode: 'Markdown', 
-          ...vipKeyboard() 
-        });
-        states[id] = { type: 'vip_waiting' };
-      } else {
-        await bot.sendMessage(id, '⚠️ اطلاعات VIP توسط ادمین تنظیم نشده است.');
-      }
-    } catch (err) {
-      console.error('❌ خطا در نمایش اطلاعات VIP:', err);
-      await bot.sendMessage(id, '❌ خطا در بارگذاری اطلاعات VIP.');
-    }
-    return;
-  }
   
   // 💬 ارسال پیام به کانیا
   if (text === '💬 ارسال پیام به کانیا') {
@@ -1550,7 +1517,8 @@ bot.on('message', async (msg) => {
   }
 });
 
-// ==================== مدیریت Callback Query ====================
+
+// ==================== Callback Query Management ====================
 bot.on('callback_query', async (callbackQuery) => {
   const data = callbackQuery.data;
   const userId = callbackQuery.from.id;
@@ -1870,11 +1838,11 @@ bot.on('callback_query', async (callbackQuery) => {
       return;
     }
     
-    // سایر callback‌ها
+    
     await bot.answerCallbackQuery(callbackQuery.id);
     
   } catch (err) {
-    console.error('❌ خطا در callback query:', err);
+    console.error('❌ خطا در callback query:', err.message, err.stack);
     await bot.answerCallbackQuery(callbackQuery.id, { 
       text: '❌ خطا در پردازش درخواست!', 
       show_alert: true 
@@ -1893,7 +1861,8 @@ app.get('/', (req, res) => {
     status: 'online',
     service: 'KaniaChatBot',
     timestamp: new Date().toISOString(),
-    webhook: WEBHOOK_URL ? 'configured' : 'not-configured'
+    webhook: WEBHOOK_URL ? 'configured' : 'not-configured',
+    uptime: process.uptime()
   });
 });
 
@@ -1903,138 +1872,142 @@ app.get('/health', async (req, res) => {
     res.json({
       status: 'healthy',
       timestamp: new Date().toISOString(),
-      uptime: process.uptime()
+      uptime: process.uptime(),
+      memory: process.memoryUsage()
     });
   } catch (error) {
+    console.error('❌ Health check failed:', error.message);
     res.status(500).json({ 
       status: 'unhealthy', 
-      error: error.message
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-app.get('/', (req, res) => {
-  res.status(200).send('KaniaChatBot is running');
-});
-
-
 // ==================== Graceful Shutdown ====================
 async function gracefulShutdown() {
   console.log('🛑 در حال خاموش کردن ربات...');
+  
   try {
-    await bot.stopPolling();
-    console.log('⏹️ Polling متوقف شد.');
+    if (isPolling) {
+      console.log('⏹️ توقف polling...');
+      bot.stopPolling();
+      isPolling = false;
+      console.log('✅ Polling متوقف شد.');
+    }
   } catch (err) {
     console.error('❌ خطا در توقف polling:', err.message);
   }
   
   try {
+    console.log('🗑️ حذف webhook...');
     await bot.deleteWebHook();
-    console.log('🗑️ Webhook حذف شد.');
+    console.log('✅ Webhook حذف شد.');
   } catch (err) {
     console.error('❌ خطا در حذف webhook:', err.message);
   }
   
   try {
+    console.log('🔌 بستن اتصال دیتابیس...');
     await pool.end();
-    console.log('🔌 اتصال دیتابیس بسته شد.');
+    console.log('✅ اتصال دیتابیس بسته شد.');
   } catch (err) {
     console.error('❌ خطا در بستن دیتابیس:', err.message);
   }
   
   console.log('👋 ربات خاموش شد.');
-  process.exit(0);
+  setTimeout(() => {
+    process.exit(0);
+  }, 1000);
 }
 
+// ==================== Error Handlers ====================
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
+
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason, reason.stack);
 });
 
-bot.on('error', (err) => console.error('❌ خطای Bot:', err.message));
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error.message, error.stack);
+  gracefulShutdown().then(() => {
+    process.exit(1);
+  });
+});
 
-// ==================== راه‌اندازی سرور ====================
-// ==================== راه‌اندازی سرور ====================
+bot.on('error', (err) => {
+  console.error('❌ خطای Telegram Bot:', err.message, err.stack);
+});
+
+bot.on('polling_error', (err) => {
+  console.error('❌ خطای Polling:', err.message, err.stack);
+});
+
+// ==================== Server Startup ====================
 async function startServer() {
-  try {
-    // 1. ابتدا دیتابیس رو چک کن
-    console.log('🗄️ بررسی دیتابیس...');
-    const dbReady = await createTables();
-    if (!dbReady) {
-      throw new Error('دیتابیس آماده نیست');
-    }
+  console.log('🚀 راه‌اندازی KaniaChatBot...');
+  console.log(`🌐 پورت: ${PORT}`);
+  console.log(`🤖 توکن: ${BOT_TOKEN ? '✅' : '❌'}`);
+  console.log(`👑 ادمین: ${ADMIN_CHAT_ID}`);
+  console.log(`🔗 وب‌هوک: ${WEBHOOK_URL ? '✅' : '❌'}`);
   
-    // در انتهای فایل قبل از app.listen
-console.log('📡 Setting up for Railway...');
-console.log('📦 NODE_ENV:', process.env.NODE_ENV);
-console.log('🏗️ RAILWAY_ENVIRONMENT:', process.env.RAILWAY_ENVIRONMENT || 'Not set');
-console.log('🔗 RAILWAY_GIT_COMMIT_SHA:', process.env.RAILWAY_GIT_COMMIT_SHA || 'Not set');
- 
-
-
-const PORT = process.env.PORT || 3000;
-
-if (!global.__serverStarted) {
-  global.__serverStarted = true;
-
-  app.get('/', (req, res) => {
-    res.status(200).send('OK');
-  });
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Express server listening on port ${PORT}`);
-  });
-}
-    // 2. سرور رو راه‌اندازی کن
-    const server = app.listen(PORT, '0.0.0.0', () => {
-      console.log(`✅ سرور در حال اجرا است`);
-      console.log(`   🌐 آدرس: http://0.0.0.0:${PORT}`);
-      console.log(`   📡 پورت: ${PORT}`);
-      console.log(`   🏗️ محیط: ${process.env.NODE_ENV || 'development'}`);
-    });
+  try {
+    // ایجاد جدول‌ها
+    const tablesCreated = await createTables();
+    if (!tablesCreated) {
+      console.error('❌ خطا در ایجاد جدول‌ها. خروج...');
+      process.exit(1);
+    }
     
-    // 3. سپس بات رو راه‌اندازی کن
-    console.log('🤖 راه‌اندازی بات تلگرام...');
+    console.log('🗄️ دیتابیس آماده است');
     
+    // راه‌اندازی webhook یا polling
     if (WEBHOOK_URL && WEBHOOK_URL.trim() !== '') {
-      const webhookUrl = WEBHOOK_URL.trim().endsWith('/') 
-        ? WEBHOOK_URL.trim().slice(0, -1) 
-        : WEBHOOK_URL.trim();
-      
-      console.log('🌍 Webhook configured');
+      const webhookUrl = WEBHOOK_URL.trim();
+      console.log(`🌍 تنظیم Webhook: ${webhookUrl}`);
       
       try {
         await bot.deleteWebHook();
-        await bot.setWebHook(`${webhookUrl}/bot${BOT_TOKEN}`);
+        await bot.setWebHook(webhookUrl);
         console.log('✅ Webhook تنظیم شد.');
       } catch (err) {
         console.error('❌ خطا در تنظیم webhook:', err.message);
-        console.log('🔄 استفاده از polling...');
-        bot.startPolling();
-        console.log('🔁 ربات با polling فعال شد.');
+        console.log('🔁 فعال‌سازی polling...');
+        await startPolling();
       }
     } else {
-      console.log('🌐 فعال‌سازی polling...');
-      bot.startPolling();
-      console.log('🔁 ربات با polling فعال شد.');
+      console.log('🔁 فعال‌سازی polling...');
+      await startPolling();
     }
     
-    console.log('🎉 KaniaChatBot آماده است! 🚀');
-    
-    // هندلر graceful shutdown
-    server.on('close', async () => {
-      console.log('🛑 سرور در حال بسته شدن...');
-      await gracefulShutdown();
+    // شروع سرور Express
+    app.listen(PORT, () => {
+      console.log(`✅ سرور Express روی پورت ${PORT} راه‌اندازی شد`);
+      console.log('🎉 KaniaChatBot آماده است! 🚀');
     });
     
-    return server;
-    
-  } catch (error) {
-    console.error('❌ خطا در راه‌اندازی سرور:', error);
+  } catch (err) {
+    console.error('❌ خطا در راه‌اندازی سرور:', err.message, err.stack);
     process.exit(1);
   }
 }
 
-// شروع سرور
+async function startPolling() {
+  try {
+    await bot.startPolling({
+      timeout: 10,
+      interval: 300,
+      autoStart: true
+    });
+    isPolling = true;
+    console.log('✅ Polling فعال شد.');
+  } catch (err) {
+    console.error('❌ خطا در شروع polling:', err.message, err.stack);
+    process.exit(1);
+  }
+}
+
+// شروع برنامه
 startServer();
