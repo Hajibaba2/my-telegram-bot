@@ -1,3 +1,5 @@
+// اضافه کردن این خط در بالاترین قسمت فایل
+console.log('🚂 Railway Startup - KaniaChatBot');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const moment = require('moment-jalaali');
@@ -1957,7 +1959,13 @@ async function startServer() {
     if (!dbReady) {
       throw new Error('دیتابیس آماده نیست');
     }
-    
+  
+    // در انتهای فایل قبل از app.listen
+console.log('📡 Setting up for Railway...');
+console.log('📦 NODE_ENV:', process.env.NODE_ENV);
+console.log('🏗️ RAILWAY_ENVIRONMENT:', process.env.RAILWAY_ENVIRONMENT || 'Not set');
+console.log('🔗 RAILWAY_GIT_COMMIT_SHA:', process.env.RAILWAY_GIT_COMMIT_SHA || 'Not set');
+ 
     // 2. سرور رو راه‌اندازی کن
     const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`✅ سرور در حال اجرا است`);
