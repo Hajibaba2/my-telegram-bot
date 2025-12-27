@@ -2056,7 +2056,7 @@ process.on('SIGTERM', () => {
 });
 
 // از Railway متغیرهای محیطی استفاده کنید
-const PORT = process.env.PORT || 3000;
+
 const RAILWAY_ENVIRONMENT = process.env.RAILWAY_ENVIRONMENT || 'development';
 // ==================== Server Startup ====================
 // ==================== Railway Specific Configuration ====================
