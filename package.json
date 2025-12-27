@@ -1,22 +1,27 @@
-// در package.json
 {
   "name": "kania-chat-bot",
   "version": "2.0.0",
-  "engines": {
-    "node": ">=18.0.0"
-  },
+  "description": "Telegram bot for Kania",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "railway": "node server.js"
+    "test": "echo \"No tests specified\" && exit 0"
   },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["telegram", "bot", "persian"],
+  "author": "Your Name",
+  "license": "MIT",
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",
     "pg": "^8.11.3",
     "express": "^4.18.2",
     "moment-jalaali": "^0.10.0",
-    "node-fetch": "^2.6.12",
-    "abort-controller": "^3.0.0",
-    "cors": "^2.8.5"
+    "node-fetch": "^2.6.12"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
   }
 }
