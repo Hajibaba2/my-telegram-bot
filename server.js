@@ -1917,9 +1917,6 @@ app.get('/', (req, res) => {
   res.status(200).send('KaniaChatBot is running');
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Express server listening on port ${PORT}`);
-});
 
 // ==================== Graceful Shutdown ====================
 async function gracefulShutdown() {
@@ -1974,6 +1971,21 @@ console.log('📦 NODE_ENV:', process.env.NODE_ENV);
 console.log('🏗️ RAILWAY_ENVIRONMENT:', process.env.RAILWAY_ENVIRONMENT || 'Not set');
 console.log('🔗 RAILWAY_GIT_COMMIT_SHA:', process.env.RAILWAY_GIT_COMMIT_SHA || 'Not set');
  
+
+
+const PORT = process.env.PORT || 3000;
+
+if (!global.__serverStarted) {
+  global.__serverStarted = true;
+
+  app.get('/', (req, res) => {
+    res.status(200).send('OK');
+  });
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ Express server listening on port ${PORT}`);
+  });
+}
     // 2. سرور رو راه‌اندازی کن
     const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`✅ سرور در حال اجرا است`);
