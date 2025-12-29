@@ -1963,158 +1963,42 @@ app.get('/', (req, res) => {
 
 
 
-// ==================== Graceful Shutdown ====================
-async function gracefulShutdown() {
-  console.log('🛑 در حال خاموش کردن ربات...');
+
+// ==================== راه‌اندازی ====================
+const startServer = async () => {
+  console.log('🚀 در حال راه‌اندازی ربات...');
   
-  try {
-    if (isPolling) {
-      console.log('⏹️ توقف polling...');
-      bot.stopPolling();
-      isPolling = false;
-      console.log('✅ Polling متوقف شد.');
+  await createTables();
+  
+  if (WEBHOOK_URL) {
+    try {
+      await bot.setWebHook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
+      console.log('✅ وب‌هوک تنظیم شد');
+    } catch (err) {
+      console.error('خطا در تنظیم وب‌هوک، استفاده از polling');
+      bot.startPolling();
     }
-  } catch (err) {
-    console.error('❌ خطا در توقف polling:', err.message);
+  } else {
+    bot.startPolling();
+    console.log('✅ Polling فعال شد');
   }
   
-  try {
-    console.log('🗑️ حذف webhook...');
-    await bot.deleteWebHook();
-    console.log('✅ Webhook حذف شد.');
-  } catch (err) {
-    console.error('❌ خطا در حذف webhook:', err.message);
-  }
-  
-  try {
-    console.log('🔌 بستن اتصال دیتابیس...');
-    await pool.end();
-    console.log('✅ اتصال دیتابیس بسته شد.');
-  } catch (err) {
-    console.error('❌ خطا در بستن دیتابیس:', err.message);
-  }
-  
-  if (server) {
-    console.log('🔌 بستن سرور HTTP...');
-    server.close();
-    console.log('✅ سرور HTTP بسته شد.');
-  }
-  
-  console.log('👋 ربات خاموش شد.');
-  setTimeout(() => {
-    process.exit(0);
-  }, 1000);
-}
-
-// ==================== Error Handlers ====================
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason, reason?.stack);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error.message, error.stack);
-  gracefulShutdown().then(() => {
-    process.exit(1);
+  server = app.listen(PORT, () => {
+    console.log(`✅ سرور روی پورت ${PORT} فعال است`);
+    console.log('🎉 KaniaChatBot آماده خدمت‌رسانی است!');
   });
+};
+
+startServer().catch(err => {
+  console.error('خطای بحرانی در راه‌اندازی:', err);
+  process.exit(1);
 });
 
-bot.on('error', (err) => {
-  console.error('❌ خطای Telegram Bot:', err.message, err.stack);
+// پاکسازی در خروج
+process.on('SIGTERM', () => {
+  console.log('🛑 در حال خاموش شدن...');
+  tempFiles.forEach(file => fs.existsSync(file) && fs.unlinkSync(file));
+  pool.end();
+  if (server) server.close();
+  process.exit(0);
 });
-
-bot.on('polling_error', (err) => {
-  console.error('❌ خطای Polling:', err.message, err.stack);
-});
-
-// ==================== Server Startup ====================
-async function startServer() {
-  console.log('🚀 راه‌اندازی KaniaChatBot...');
-  console.log(`🌐 پورت: ${PORT}`);
-  console.log(`🤖 توکن: ${BOT_TOKEN ? '✅' : '❌'}`);
-  console.log(`👑 ادمین: ${ADMIN_CHAT_ID}`);
-  console.log(`🔗 وب‌هوک: ${WEBHOOK_URL ? '✅' : '❌'}`);
-  
-  try {
-    // ایجاد جدول‌ها
-    const tablesCreated = await createTables();
-    if (!tablesCreated) {
-      console.error('❌ خطا در ایجاد جدول‌ها. خروج...');
-      process.exit(1);
-    }
-    
-    console.log('🗄️ دیتابیس آماده است');
-    
-    // راه‌اندازی webhook یا polling
-    if (WEBHOOK_URL && WEBHOOK_URL.trim() !== '') {
-      const webhookUrl = WEBHOOK_URL.trim();
-      console.log(`🌍 تنظیم Webhook: ${webhookUrl}`);
-      
-      try {
-        await bot.deleteWebHook();
-        await bot.setWebHook(webhookUrl);
-        console.log('✅ Webhook تنظیم شد.');
-      } catch (err) {
-        console.error('❌ خطا در تنظیم webhook:', err.message);
-        console.log('🔁 فعال‌سازی polling...');
-        await startPolling();
-      }
-    } else {
-      console.log('🔁 فعال‌سازی polling...');
-      await startPolling();
-    }
-    
-    // شروع سرور Express
-    server = app.listen(PORT, () => {
-      console.log(`✅ سرور Express روی پورت ${PORT} راه‌اندازی شد`);
-      console.log('🎉 KaniaChatBot آماده است! 🚀');
-    });
-    
-    // مدیریت خطای پورت در حال استفاده
-    server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        console.error(`❌ پورت ${PORT} در حال استفاده است!`);
-        console.log('🔄 تلاش برای استفاده از پورت تصادفی...');
-        
-        // بستن سرور فعلی
-        if (server) {
-          server.close();
-        }
-        
-        // تلاش با پورت تصادفی
-        const randomPort = Math.floor(Math.random() * (65535 - 1024) + 1024);
-        server = app.listen(randomPort, () => {
-          console.log(`✅ سرور Express روی پورت ${randomPort} راه‌اندازی شد`);
-          console.log('🎉 KaniaChatBot آماده است! 🚀');
-        });
-      } else {
-        console.error('❌ خطای سرور:', err.message);
-        process.exit(1);
-      }
-    });
-    
-  } catch (err) {
-    console.error('❌ خطا در راه‌اندازی سرور:', err.message, err.stack);
-    process.exit(1);
-  }
-}
-
-async function startPolling() {
-  try {
-    await bot.startPolling({
-      timeout: 10,
-      interval: 300,
-      autoStart: true
-    });
-    isPolling = true;
-    console.log('✅ Polling فعال شد.');
-  } catch (err) {
-    console.error('❌ خطا در شروع polling:', err.message, err.stack);
-    process.exit(1);
-  }
-}
-
-// شروع برنامه
-startServer();
